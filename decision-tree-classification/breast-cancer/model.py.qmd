@@ -30,12 +30,13 @@ cancer = pd.read_csv("breast-cancer-dataset.csv")
 
 ```
 
-
 # Basic data exploration
 
 ```{python}
 
 # Understand fields
+cancer_summary = DataFrameSummary(cancer)
+cancer_summary.summary()
 
 ```
 
