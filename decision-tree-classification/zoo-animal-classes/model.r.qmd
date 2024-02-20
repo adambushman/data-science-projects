@@ -1,0 +1,180 @@
+---
+title: "Zoo Animal Classification"
+description: "Leveraging decision trees in {tidymodels} to classify zoo animals"
+author: "Adam Bushman"
+format: html
+---
+
+
+# Introduction
+
+Data sourced from Kaggle,
+[Zoo Animal Classification](https://www.kaggle.com/datasets/uciml/zoo-animal-classification/data), accessed January 19th, 2024. Downloaded extracts are saved within this repository and loaded for purpose of modeling.
+
+
+# Analysis prep
+
+```{r}
+
+# Loading libraries
+library('tidyverse')
+library('tidymodels')
+
+```
+
+```{r}
+
+# Defining directory reference
+here::i_am("projects/decision-tree-classification/zoo-animal-classes/model.qmd")
+
+# Load data into session
+zoo <- read.csv("zoo.csv")
+class <- read.csv("class.csv")
+
+```
+
+
+# Basic data exploration
+
+```{r}
+
+# Understand fiends, 
+glimpse(zoo)
+
+summary(zoo)
+
+```
+
+# Alter dataset
+
+```{r}
+
+# Turn `class_type` to a factor
+zoo <- 
+  zoo %>%
+  select(-animal_name) %>%
+  mutate(
+    across(hair:fins, ~ as.logical(.)), 
+    across(tail:catsize, ~ as.logical(.)), 
+    class_type = factor(class_type)
+  )
+
+```
+
+
+# Model prep
+
+```{r}
+
+# Defining a split
+split <- rsample::initial_split(zoo)
+
+# Training and testing sets
+z_train <- rsample::training(split)
+z_test <- rsample::testing(split)
+
+```
+
+# Defining a model, recipe, and workflow
+
+```{r}
+
+# Model
+z_mod <- decision_tree(tree_depth = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+
+# Recipe
+z_rec <- recipe(class_type ~ ., data = z_train)
+
+# Workflow
+z_wfl <- workflow() %>%
+  add_model(z_mod) %>%
+  add_recipe(z_rec)
+
+```
+
+# Setting up the tuning details
+
+```{r}
+
+# Tuning grid
+z_grid <- expand.grid(tree_depth = seq(1,10))
+
+# Setting up the tuning
+z_tune <- tune_grid(
+  z_wfl, 
+  resamples = rsample::bootstraps(z_train, times = 5), 
+  grid = z_grid, 
+  metrics = metric_set(accuracy)
+)
+
+```
+
+
+# Exploring the results
+
+```{r}
+
+# Extracting results from the tuned grid
+results <- 
+  z_tune %>%
+  unnest(.metrics)
+
+# Plot accuracy metric
+ggplot(results, aes(x = tree_depth, y = .estimate)) +
+  geom_point() +
+  stat_smooth() +
+  scale_x_continuous(
+    breaks = results$tree_depth
+  )
+
+```
+
+# Constructing a model with max depth of 4
+
+```{r}
+
+# Official model
+z_mod_o <- 
+  update(
+    z_mod, 
+    tree_depth = 4
+  )
+
+# Official workflow
+z_wfl_o <- 
+  workflow() %>% 
+  add_model(z_mod_o) %>% 
+  add_recipe(z_rec)
+
+# Fitting the training data
+z_fit <-
+  z_wfl_o %>%
+  fit(data = z_train)
+
+```
+
+# Evaluating the model
+
+```{r}
+
+# Predicting the testing data based on training
+z_pred <- 
+  z_fit %>%
+  predict(new_data = z_test)
+
+# Assembling results 
+results <- tibble(
+  predicted = z_pred$.pred_class, 
+  observed = z_test$class_type
+)
+
+# Comparing results
+results %>%
+  yardstick::metrics(
+    truth = observed, 
+    estimate = predicted
+  )
+
+```
