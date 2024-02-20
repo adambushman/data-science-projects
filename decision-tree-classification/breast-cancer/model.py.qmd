@@ -17,13 +17,9 @@ Data sourced from Kaggle,
 ```{python}
 
 # Loading libraries
-import os
 import pandas as pd
 from sklearn import tree
-
-```
-
-```{python}
+from pandas_summary import DataFrameSummary
 
 # Load data into session
 cancer = pd.read_csv("breast-cancer-dataset.csv")
@@ -44,7 +40,22 @@ cancer_summary.summary()
 
 ```{python}
 
-# Turn `class_type` to a factor
+cancer.columns = ["Pat_Id", "Year", "Age", "Menopause", "Tumor_Size_Cm", "Inv_Nodes", "Breast", "Metastasis", "Breast_Quadrant", "History", "Diagnosis_Result"]
+
+cancer_clean = (
+    cancer
+        .assign(
+            Pat_Id = lambda dfa: (dfa.Pat_Id
+                .astype("category")), 
+            Menopause = lambda dfb: (dfb.Menopause
+                .astype("bool")), 
+            Tumor_Size_Cm = lambda dfc: (
+                pd.to_numeric(dfc.Tumor_Size_Cm)), 
+        )
+)
+
+
+# There are "#" codes in the data to figure out...
 
 ```
 
