@@ -1,20 +1,22 @@
----
-title: "Breast Cancer Classification"
-description: "Leveraging decision trees in {scikitlearn} to classify breast cancer"
-author: "Adam Bushman"
-format: html
----
-
-
-# Introduction
-
-Data sourced from Kaggle,
-[Breast Cancer Prediction](https://www.kaggle.com/datasets/fatemehmehrparvar/breast-cancer-prediction), accessed February 19th, 2024. Downloaded extracts are saved within this repository and loaded for purpose of modeling.
-
-
-# Analysis prep
-
-```{python}
+# type: ignore
+# flake8: noqa
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
 
 # Loading libraries
 import pandas as pd
@@ -25,21 +27,21 @@ from pandas_summary import DataFrameSummary
 # Load data into session
 cancer = pd.read_csv("breast-cancer-dataset.csv")
 
-```
-
-# Basic data exploration
-
-```{python}
+#
+#
+#
+#
+#
 
 # Understand fields
 cancer_summary = DataFrameSummary(cancer)
 cancer_summary.summary()
 
-```
-
-# Clean dataset
-
-```{python}
+#
+#
+#
+#
+#
 
 cancer.columns = ["Pat_Id", "Year", "Age", "Menopause", "Tumor_Size_Cm", "Inv_Nodes", "Breast", "Metastasis", "Breast_Quadrant", "History", "Diagnosis_Result"]
 
@@ -52,22 +54,22 @@ cancer_clean["Tumor_Size_Cm"] = cancer_clean["Tumor_Size_Cm"].apply(pd.to_numeri
 
 # There are "#" codes in the data to figure out...
 
-```
-
-
-# Model prep
-
-```{python}
+#
+#
+#
+#
+#
+#
 
 # Defining a split
 
 # Training and testing sets
 
-```
-
-# Defining a model, recipe, and workflow
-
-```{python}
+#
+#
+#
+#
+#
 
 # Model
 
@@ -75,32 +77,32 @@ cancer_clean["Tumor_Size_Cm"] = cancer_clean["Tumor_Size_Cm"].apply(pd.to_numeri
 
 # Workflow
 
-```
-
-# Setting up the tuning details
-
-```{python}
+#
+#
+#
+#
+#
 
 # Tuning grid
 
 # Setting up the tuning
 
-```
-
-
-# Exploring the results
-
-```{python}
+#
+#
+#
+#
+#
+#
 
 # Extracting results from the tuned grid
 
 # Plot accuracy metric
 
-```
-
-# Constructing a model with max depth of 4
-
-```{python}
+#
+#
+#
+#
+#
 
 # Official model
 
@@ -108,11 +110,11 @@ cancer_clean["Tumor_Size_Cm"] = cancer_clean["Tumor_Size_Cm"].apply(pd.to_numeri
 
 # Fitting the training data
 
-```
-
-# Evaluating the model
-
-```{python}
+#
+#
+#
+#
+#
 
 # Predicting the testing data based on training
 
@@ -120,4 +122,7 @@ cancer_clean["Tumor_Size_Cm"] = cancer_clean["Tumor_Size_Cm"].apply(pd.to_numeri
 
 # Comparing results
 
-```
+#
+#
+#
+#
