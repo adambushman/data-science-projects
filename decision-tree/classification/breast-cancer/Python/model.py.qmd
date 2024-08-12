@@ -23,7 +23,7 @@ from sklearn import tree
 from pandas_summary import DataFrameSummary
 
 # Load data into session
-cancer = pd.read_csv("breast-cancer-dataset.csv")
+cancer = pd.read_csv("../breast-cancer-dataset.csv")
 
 ```
 
