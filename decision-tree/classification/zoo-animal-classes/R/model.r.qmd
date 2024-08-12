@@ -25,11 +25,11 @@ library('tidymodels')
 ```{r}
 
 # Defining directory reference
-here::i_am("projects/decision-tree-classification/zoo-animal-classes/model.qmd")
+here::i_am("projects/decision-tree/classification/zoo-animal-classes/model.qmd")
 
 # Load data into session
-zoo <- read.csv("zoo.csv")
-class <- read.csv("class.csv")
+zoo <- read.csv(here::here("decision-tree", "classification", "zoo-animal-classes", "zoo.csv"))
+class <- read.csv(here::here("decision-tree", "classification", "zoo-animal-classes", "class.csv"))
 
 ```
 
