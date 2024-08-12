@@ -21,8 +21,8 @@ library('tidymodels')
 library('stringr')
 
 # Reading the data
-here::i_am("projects/decision-tree-regression/laptop-price/model.qmd")
-lap_data <- read.csv('laptop_price.csv')
+here::i_am("decision-tree/regression/laptop-price/R/laptop_price.csv")
+lap_data <- read.csv(here::here("R", "laptop_price.csv"))
 
 ```
 
