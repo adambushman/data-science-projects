@@ -1,6 +1,6 @@
 ---
 title: "Car Pric Regression"
-description: "Leveraging linear regression in Julia to predict the price of cars"
+description: "Leveraging linear regression in Julia to predict the fuel efficiency (mpg) of vehicles"
 author: "Adam Bushman"
 format: html
 ---
@@ -17,7 +17,12 @@ This notebook implements a linear regression technique in Julia using the {___} 
 
 ```{julia}
 
-2+3
+# Load packages
+using CSV, GLM, Plots, TypedTables
+
+# Read in the data and define as a table
+data = CSV.File("../mtcars.csv")
+table = Table(data)
 
 ```
 
@@ -26,6 +31,12 @@ This notebook implements a linear regression technique in Julia using the {___} 
 # Feature Engineering
 
 # Setup training and testing sets
+
+```{julia}
+
+model01 = lm(@formula(mpg ~ cyl+disp+hp+wt+gear+carb), table)
+
+```
 
 # Defining the model, recipe
 
