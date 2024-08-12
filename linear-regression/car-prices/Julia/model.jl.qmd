@@ -15,9 +15,9 @@ This notebook implements a linear regression technique in Julia using the {___} 
  
 # Analysis Prep
 
-```{python}
+```{julia}
 
-import pandas as pd
+2+3
 
 ```
 
