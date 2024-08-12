@@ -1,0 +1,34 @@
+---
+title: "Car Pric Regression"
+description: "Leveraging linear regression in Python to predict the price of cars"
+author: "Adam Bushman"
+format: html
+---
+
+
+# Introduction
+
+Data sourced from R,
+[{mtcars}](https://stat.ethz.ch/R-manual/R-devel/library/datasets/html/mtcars.html), accessed August 11th, 2024. Downloaded extracts are saved within this repository and loaded for purpose of modeling.
+
+This notebook implements a linear regression technique in Python using the {scikit-learn} library.
+ 
+# Analysis Prep
+
+```{python}
+
+import pandas as pd
+
+```
+
+# Simple Exploratory Data Analysis
+
+# Feature Engineering
+
+# Setup training and testing sets
+
+# Defining the model, recipe
+
+# Setting up the workflow and tuning
+
+# Evaluating metrics
