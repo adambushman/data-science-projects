@@ -1,3 +1,4 @@
 *py.qmd linguist-language=Python
 *r.qmd linguist-language=R
 *jl.qmd linguist-language=Julia
+*.html linguist-vendored
