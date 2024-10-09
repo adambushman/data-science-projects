@@ -3,15 +3,15 @@ title: "Penalized Regression | Sacramento Housing Data"
 description: "Leveraging penalized regression in R to predict housing prices in Sacramento, CA"
 author: "Adam Bushman"
 date: "10/8/2024"
-execute:
-    warning: false
-    error: false
-    embed-resources: true
 format: 
     html:
         toc: true
         theme: simplex
         smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
 ---
 
 
