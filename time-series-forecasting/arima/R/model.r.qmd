@@ -1,0 +1,104 @@
+---
+title: "Arima, Time Series Forecasting | _______"
+description: ""
+author: "Adam Bushman"
+date: "10/15/2024"
+format: 
+    html:
+        toc: true
+        theme: simplex
+        smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
+---
+
+# Assignment Questions
+
+## Name
+>   What is your name? Include all team members if submitting as a group.
+
+Adam Bushman [u6049169]; no group members.
+
+
+## Perspective
+>   From what perspective ar you conducting the analysis? (Who are you? / Who are you working for?)
+
+
+## Question
+>   What is your question?
+
+
+## Data set
+>   Describe your dataset(s) including URL (if available)
+
+
+## Predictor(s) and target(s)
+>   What is (are) your independent variable(s) and dependent variable(s)? Include variable type (binary, categorical, numeric).
+
+
+
+## Model resonability
+>   How are your variables suitable for your analysis method?
+
+
+
+## Conclusions
+>   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
+
+
+## Assumptions
+>   What are your assumptions and limitations? Did you include any robustness checks?
+
+
+
+# Assignment Workflow
+ 
+## Analysis Prep
+
+### Loading packages
+```{r}
+
+library('tidyverse')        # Wrapper for many convenient libraries
+library('modeldata')        # Contains data for the assignment
+library('skimr')            # Quickly summarise data
+library('gt')               # Render "great tables"
+library('leaflet')          # Make interactive maps
+
+library('glmnet')           # Loading penalized regression library
+library('rsample')          # Easy sampling and splitting
+library('corrplot')         # Quick correlation plots
+
+```
+
+### Loading the data
+
+
+### Data set inspection
+
+
+## Simple Exploratory Data Analysis
+
+## Preprocessing
+
+### Data cleaning / Feature Engineering
+
+
+## Model resources
+
+### Splitting for training/testing sets
+
+
+## Training and tuning
+
+### Fit a model
+
+
+### Evaluating tuning
+
+
+## Final model
+
+
+## Results
