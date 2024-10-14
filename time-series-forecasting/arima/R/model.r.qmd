@@ -59,26 +59,112 @@ Adam Bushman [u6049169]; no group members.
 
 ### Loading packages
 ```{r}
-
 library('tidyverse')        # Wrapper for many convenient libraries
-library('modeldata')        # Contains data for the assignment
+library('tsibbledata')      # Contains data for the assignment
 library('skimr')            # Quickly summarise data
 library('gt')               # Render "great tables"
-library('leaflet')          # Make interactive maps
 
-library('glmnet')           # Loading penalized regression library
-library('rsample')          # Easy sampling and splitting
-library('corrplot')         # Quick correlation plots
-
+library('forecast')
+library('tseries')
+library('astsa')
 ```
 
 ### Loading the data
+We'll begin by referencing the data from `{tsibbledata}`; the "PBS" data are the collection of variables respective to Australian medicare perscriptions.
 
+```{r}
+px_data <- tsibbledata::PBS          # Load data into the session
+```
+
+Let's now get a sense for what we're working with.
 
 ### Data set inspection
+Right away, I like to get acquainted with the data set. That means understanding what each column seeks to describe, confirming the granularity of the rows, and getting my arms around structure, completeness, distribution, etc.
+
+The package designers for `{tsibble}` included the following data dictionary:
+
+```{r}
+#| include: false
+
+px_data_dict <- tibble(
+    variable = c("Month", "Concession", "Type", "ATC1", "ATC1_desc", "ATC2", "ATC2_desc", "Scripts", "Cost"), 
+    datatype = c("<yearmonth>", "<char>", "<char>", "<char>", "<char>", "<char>", "<char>", "<double>", "<double>"), 
+    description = c(
+        "A key for the year/month of the observation", 
+        "Concessional scripts are given to pensioners, unemployed, dependents, and other card holders", 
+        "Co-payments are made until an individual's script expenditure hits a threshold ($290.00 for concession, $1,141.80 otherwise). Safety net subsidies are provided to individuals exceeding this amount", 
+        "Code for Anatomical Therapeutic Chemical index (level 1)", 
+        "Description for Anatomical Therapeutic Chemical index (level 1); divides drugs into 14 anatomical groups based on the primary part of the body or organ system they act upon", 
+        "Code for Anatomical Therapeutic Chemical index (level 2)", 
+        "Code for Anatomical Therapeutic Chemical index (level 2); specifies the type of treatment or function the drugs perform within the organ system", 
+        "Total number of scripts", 
+        "Cost of the scripts in $AUD"
+    )
+)
+```
+
+::: {#data-dictionary}
+```{r}
+#| html-table-processing: none
+
+gt(px_data_dict) %>%                                   # Create a "great tables" (gt) object
+    cols_label(                                         # Rename some columns
+        variable = "Variable Name", 
+        datatype = "Data Type", 
+        description = "Variable Description"
+    ) %>%
+    tab_options(
+        column_labels.background.color = "#d9230f",     # Apply red header background
+        column_labels.font.weight = "bold",             # Bold headers
+        row.striping.background = '#FFFFFF'             # Remove row striping
+    )
+```
+:::
+
+Using the `{skimr}` package, we can get a comprehensive summary of the data.
+
+```{r}
+skim(px_data[,-1])          # Left out <yearmonth> data type
+```
+<br>
+
 
 
 ## Simple Exploratory Data Analysis
+
+### 
+
+### Assessing distribution
+
+```{r}
+ggplot(px_data, aes(x = "1", y = Scripts)) +                                    # Setup ggplot object
+    ggdist::stat_halfeye(                                                       # Distribution plot
+        adjust = 0.5, 
+        width = 0.6, 
+        .width = 0, 
+        justification = -0.2, 
+        point_color = NA
+    ) +
+    geom_boxplot(                                                               # Boxplot
+        width = 0.15, 
+        outlier.shape = NA
+    ) +
+    gghalves::geom_half_point(                                                  # Individual observations
+        side = "l", 
+        range_scale = 0.4, 
+        alpha = 0.2
+    ) + 
+    facet_wrap(~Concession, nrow = 1, scales = "free") +                        # Two visualizations, side-by-side
+    theme_minimal() +                                                           # Theme styling
+    theme(
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        axis.text.x = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        strip.background = element_rect(fill = "#BE0000", color = NA), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
 
 ## Preprocessing
 
