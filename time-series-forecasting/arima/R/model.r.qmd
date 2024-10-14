@@ -132,7 +132,28 @@ skim(px_data[,-1])          # Left out <yearmonth> data type
 
 ## Simple Exploratory Data Analysis
 
-### 
+### Tracking levels
+
+We've got a few disaggregated values 
+
+```{r}
+px_raw %>%
+    count(.by = Concession) %>%
+    mutate(share = n / sum(n))
+```
+
+
+```{r}
+px_raw %>%
+    count(.by = Type) %>%
+    mutate(share = n / sum(n))
+```
+
+```{r}
+px_raw %>%
+    count(.by = ATC1) %>%
+    mutate(share = n / sum(n))
+```
 
 ### Assessing distribution
 
@@ -169,6 +190,10 @@ ggplot(px_data, aes(x = "1", y = Scripts)) +                                    
 ## Preprocessing
 
 ### Data cleaning / Feature Engineering
+Are the data stationary?
+```{r}
+adf.test(pull(px_raw, Scripts))
+```
 
 
 ## Model resources
