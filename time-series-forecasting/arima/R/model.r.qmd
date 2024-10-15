@@ -23,7 +23,7 @@ Adam Bushman [u6049169]; no group members.
 
 
 ## Perspective
->   From what perspective ar you conducting the analysis? (Who are you? / Who are you working for?)
+>   From what perspective are you conducting the analysis? (Who are you? / Who are you working for?)
 
 
 ## Question
@@ -60,6 +60,7 @@ Adam Bushman [u6049169]; no group members.
 ### Loading packages
 ```{r}
 library('tidyverse')        # Wrapper for many convenient libraries
+library('tsibble')          # Working with time series tibbles
 library('tsibbledata')      # Contains data for the assignment
 library('skimr')            # Quickly summarise data
 library('gt')               # Render "great tables"
@@ -128,37 +129,69 @@ skim(px_data[,-1])          # Left out <yearmonth> data type
 ```
 <br>
 
+The data are mostly complete, thankfully. We see about 5% of records with missing `ATC1_desc` and `ATC2_desc`. These values aren't strictly necessary for a simple forecasting exercise anyway.
 
+I always like to see the data using the `glimpse()` function from `{dplyr}`:
+
+```{r}
+head(px_data) |>
+    mutate(Month = yearmonth(Month))
+```
 
 ## Simple Exploratory Data Analysis
 
 ### Tracking levels
+It's clear that the data are disaggregated. For example, the number of `Scripts` and total of `Cost` has been pieced up for the supplemental variables. Let's get a sense for what that looks like.
 
-We've got a few disaggregated values 
-
+#### `Concession`
 ```{r}
-px_raw %>%
+px_data %>%
     count(.by = Concession) %>%
     mutate(share = n / sum(n))
 ```
 
-
+#### `Type`
 ```{r}
-px_raw %>%
+px_data %>%
     count(.by = Type) %>%
     mutate(share = n / sum(n))
 ```
 
+#### `ATC1`
 ```{r}
-px_raw %>%
+px_data %>%
     count(.by = ATC1) %>%
     mutate(share = n / sum(n))
 ```
 
+#### Conclusion
+This forecasting exercise is supposed to be simple. We aren't meant to generate multiple, grouped forecasts. We'll assume a slice or fully aggregated data set is of interest to the user.
+
 ### Assessing distribution
+The variables available to us for forecasting are `Scripts` and `Cost`. Let's get a sense for their distribution. 
+
+First, to make plotting easier, let's pivot the data to a long format:
 
 ```{r}
-ggplot(px_data, aes(x = "1", y = Scripts)) +                                    # Setup ggplot object
+px_pivot <- px_data |> 
+    as_tibble() |>
+    select(Scripts, Cost) |>        # Restrict data to variables of interest        
+    pivot_longer(                   # Pivot to a long version
+        cols = everything(),                        
+        names_to = "measure", 
+        values_to = "value"
+    )
+
+head(px_pivot)
+```
+
+A great way to do visualize distribution is with a "raincloud" plot, which combines a traditional boxplot, scatter points, and a density shape. In this way, a complete understanding is had over the distribution of values. The below code is adopted from [Cedric Scherer's work](https://www.cedricscherer.com/2021/06/06/visualizing-distributions-with-raincloud-plots-and-how-to-create-them-with-ggplot2/).
+
+```{r}
+ggplot(                                                                         # Setup ggplot object
+    px_pivot, 
+    aes(x = "1", y = value)
+) +                                    
     ggdist::stat_halfeye(                                                       # Distribution plot
         adjust = 0.5, 
         width = 0.6, 
@@ -175,7 +208,7 @@ ggplot(px_data, aes(x = "1", y = Scripts)) +                                    
         range_scale = 0.4, 
         alpha = 0.2
     ) + 
-    facet_wrap(~Concession, nrow = 1, scales = "free") +                        # Two visualizations, side-by-side
+    facet_wrap(~measure, nrow = 1) +                                            # Generate two plots
     theme_minimal() +                                                           # Theme styling
     theme(
         axis.title.x = element_blank(), 
@@ -187,14 +220,93 @@ ggplot(px_data, aes(x = "1", y = Scripts)) +                                    
     )
 ```
 
+Clearly the data are highly skewed. This opens up the possibility for a logarithmic transformation. Let's run the same code by using a log scale:
+
+```{r}
+#| eval: true
+
+ggplot(                                                                         # Setup ggplot object
+    px_pivot, 
+    aes(x = "1", y = value)
+) +                                    
+    ggdist::stat_halfeye(                                                       # Distribution plot
+        adjust = 0.5, 
+        width = 0.6, 
+        .width = 0, 
+        justification = -0.2, 
+        point_color = NA
+    ) +
+    geom_boxplot(                                                               # Boxplot
+        width = 0.15, 
+        outlier.shape = NA
+    ) +
+    gghalves::geom_half_point(                                                  # Individual observations
+        side = "l", 
+        range_scale = 0.4, 
+        alpha = 0.2
+    ) + 
+    scale_y_log10() +  
+    facet_wrap(~measure, nrow = 1) +                                            # Generate two plots
+    theme_minimal() +                                                           # Theme styling
+    theme(
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        axis.text.x = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        strip.background = element_rect(fill = "#BE0000", color = NA), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+That's much improved! Such a transform may be a great way to improve our eventual forecasting model and better align with the assumptions of ARIMA.
+
+### Trends
+
+This is a forecasting exercise. As such, we'd be remiss if not to plot the trend. Let's first fully aggregate the data and then perform another pivot for a long format:
+
+```{r}
+px_trend <-
+    px_data |>
+    as_tibble() |>
+    summarise(
+        Total_Scripts = sum(Scripts), 
+        Total_Cost = sum(Cost), 
+        .by = Month
+    ) |>
+    pivot_longer(
+        cols = -Month, 
+        names_to = "measure", 
+        values_to = "values"
+    )
+
+head(px_trend)
+```
+
+Let's now plot the trend for both measures. We'll apply a logarithmic transform right away since we know both measures are highly skewed.
+
+```{r}
+ggplot(
+    px_trend, 
+    aes(Month, values)
+) +
+    geom_line() +
+    scale_y_log10() +  
+    facet_wrap(~measure, ncol = 1, scales = "free") +                           # Generate two plots
+    theme_minimal() +                                                           # Theme styling
+    theme(
+        axis.title.y = element_blank(), 
+        axis.title.x = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        strip.background = element_rect(fill = "#BE0000", color = NA), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+We've got some nice plots now. Clearly the values are not stationary but that's a matter for the next section as we prepare the data for forecasting.
+
 ## Preprocessing
 
 ### Data cleaning / Feature Engineering
-Are the data stationary?
-```{r}
-adf.test(pull(px_raw %>% filter(Type == "Co-payments", Concession == "Concessional", ATC1 == "A"), Scripts))
-```
-
 
 ## Model resources
 
