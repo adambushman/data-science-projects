@@ -192,7 +192,7 @@ ggplot(px_data, aes(x = "1", y = Scripts)) +                                    
 ### Data cleaning / Feature Engineering
 Are the data stationary?
 ```{r}
-adf.test(pull(px_raw, Scripts))
+adf.test(pull(px_raw %>% filter(Type == "Co-payments", Concession == "Concessional", ATC1 == "A"), Scripts))
 ```
 
 
