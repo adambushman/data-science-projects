@@ -307,21 +307,153 @@ We've got some nice plots now. Clearly the values are not stationary but that's 
 ## Preprocessing
 
 ### Data cleaning / Feature Engineering
+As we've already assessed, there's no "cleaning" to perform on the data since everything we're going to use is complete. However, we do want to do some feature engineering. We're going to tackle a handful of issues/checks:
 
-## Model resources
+1.  We need to formally aggregate the data so we haven't multiple levels per point in time
+2.  We need resolve the skewness; we've already shown how to do that with a logarithmic transform
+3.  We need to confirm non-stationarity; an ARIMA model requires no trend
+4.  We also need to assess "auto-correlation", so the model knows how much to error to use in the moving average and how many lagged points to include
 
-### Splitting for training/testing sets
+#### Aggregation
+```{r}
+px_agg <-
+    px_data |>
+    as_tibble() |>
+    summarise(
+        Total_Scripts = sum(Scripts), 
+        Total_Cost = sum(Cost), 
+        .by = Month
+    ) |>
+    mutate(Month = yearmonth(Month)) |>
+    tsibble(index = Month)
 
+head(px_agg)
+```
 
-## Training and tuning
+#### Resolve skewness
+```{r}
+px_norm <-
+    px_agg |>
+    mutate(across(
+        Total_Scripts:Total_Cost, 
+        ~log(.), 
+        .names = "{.col}_log"
+    ))
 
-### Fit a model
+head(px_norm)
+```
 
+#### Stationarity
+We confirm stationarity using the "Augmented Dickey-Fuller Test". We'll do it for each of our logarithmically transformed variables, `Total_Scripts_log` and `Total_Cost_log`:
 
-### Evaluating tuning
+```{r}
+adf.test(px_norm$Total_Scripts_log, alternative = "stationary")
+```
 
+```{r}
+adf.test(px_norm$Total_Cost_log, alternative = "stationary")
+```
 
-## Final model
+Are the data stationary? Well, we set the alternative hypothesis to be "stationary", therefore a statistically significant result from the test (very low p-value) would indicate they are. And that's what we're getting.
 
+However, we can see some trend in the data. Let's difference the values and see the results.
 
-## Results
+```{r}
+adf.test(diff(px_norm$Total_Scripts_log), alternative = "stationary")
+```
+
+```{r}
+adf.test(diff(px_norm$Total_Cost_log), alternative = "stationary")
+```
+
+THere's "some" improvement in the `Total_Cost_log`, but its marginal. What if we plot, quickly:
+
+```{r}
+ggplot(
+    px_norm |>
+    mutate(across(
+        c(Total_Cost_log, Total_Scripts_log), 
+        ~difference(.)
+    )) |>
+        as_tibble() |>
+        pivot_longer(
+            cols = c(Total_Scripts_log, Total_Cost_log), 
+            names_to = "measure", values_to = "values"
+        ), 
+    aes(Month, values)
+) +
+    geom_line() +
+    facet_wrap(~measure, ncol = 1, scales = "free") +                           # Generate two plots
+    theme_minimal() +                                                           # Theme styling
+    theme(
+        axis.title.y = element_blank(), 
+        axis.title.x = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        strip.background = element_rect(fill = "#BE0000", color = NA), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+That looks A LOT more stationary. We would say that $d=1$ for each value is sufficient in an ARIMA model.
+
+```{r}
+px_diff <- 
+    px_norm |>
+    mutate(
+        Total_Scripts_log_diff = difference(Total_Scripts_log), 
+        Total_Cost_log_diff = difference(Total_Cost_log)
+    )
+
+head(px_diff)
+```
+
+#### Auto-correlation
+Finally, let's resolve any auto-correlation issues. We can assess this in two ways:
+
+```{r}
+acf(px_diff$Total_Scripts_log_diff[-1])
+```
+
+```{r}
+acf(px_diff$Total_Cost_log_diff[-1])
+```
+
+In these plots, we're seeing 1 significant correlation (the second bar from the left). For an ARIMA model, we'll go with $q=1$.
+
+Next, let's look at partial auto-correlation to determine $p$:
+
+```{r}
+pacf(px_diff$Total_Scripts_log_diff[-1])
+```
+
+```{r}
+pacf(px_diff$Total_Cost_log_diff[-1])
+```
+
+These plots show three (3) significant correlations so we would use $p=3$ in an ARIMA model.
+
+Of course, these values are slightly fluid. We could run multiple models testing different values and compare AIC values.
+
+## Forecasting model
+
+### Auto-ARIMA
+
+For this exercise, we're going to let ARIMA find the best model. It will go through the same process we just did, finding optimal valuse of $d, q, p$.
+
+```{r}
+px_Scripts_fit <- auto.arima(px_norm$Total_Scripts_log)
+```
+
+```{r}
+px_Cost_fit <- auto.arima(px_norm$Total_Cost_log)
+```
+
+### Evaluation
+
+Let's see how the models performed, starting with the forecast for `Scripts`. We can use the `checkresiduals()` function:
+
+```{r}
+checkresiduals(px_Scripts_fit)
+```
+
+## Conclusion
