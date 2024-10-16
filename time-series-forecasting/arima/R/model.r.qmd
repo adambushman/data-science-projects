@@ -1,6 +1,6 @@
 ---
-title: "Arima, Time Series Forecasting | _______"
-description: ""
+title: "ARIMA, Time Series Forecasting | Medicare Perscription Volumes"
+description: "Forecasting the monthly volume of medicare perscription dispenses using the ARIMA model"
 author: "Adam Bushman"
 date: "10/15/2024"
 format: 
@@ -25,33 +25,53 @@ Adam Bushman [u6049169]; no group members.
 ## Perspective
 >   From what perspective are you conducting the analysis? (Who are you? / Who are you working for?)
 
+I am a medicare perscription plan manager, in charge of monitoring script dispenses across medicare plans. Its important for me to understand the anticipated scale (in volume and cost) of scripts for the next calendar year. 
 
 ## Question
 >   What is your question?
 
+What are the range of likely scenarios for monthly medicare perscription dispenses over the next 12 months?
 
 ## Data set
 >   Describe your dataset(s) including URL (if available)
 
+The data set is titled [*Monthly Medicare Australia prescription data*](https://tsibbledata.tidyverts.org/reference/PBS.html), sourced from the `{tsibbledata}` package. It was originally sourced from *Medicare Australia*.
 
 ## Predictor(s) and target(s)
 >   What is (are) your independent variable(s) and dependent variable(s)? Include variable type (binary, categorical, numeric).
 
+Independent variables are `Month`; other covariates are excluded for simplicity. This value is a of `month` data type, representing the unique month and year.
 
+Dependent variables are `Scripts` and `Cost`, each forecasted indpendently. They are of type `double`.
+
+Additional detail may be seen in the [data dictionary](#data-dictionary).
 
 ## Model resonability
 >   How are your variables suitable for your analysis method?
 
-
+The data are already formatted for use in time series analysis and forecasting. A `tsibble` is a modified version of a `tseries` but adheres to "tidy" principles. Additionally, the variables are well suited for use in ARIMA since we have consistent time intervals and continuous target variables. Furthermore, the data present opportunities to leverage the strengths of ARIMA, such as "non-stationarity" and "auto-correlation".
 
 ## Conclusions
 >   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
 
+While exploring monthly `Script` and `Cost` data, it was found that the delivered format was demonstrative of [seasonality and non-stationarity](#trend-plot), elements well-suited for ARIMA to correct. Having met the assumptions of the forecasting model, we proceeded to fit the model.
+
+The `auto.arima` modeling approach yielded the following parameters:
+
+*   $d = 2$: "differencing" the values was done twice to achieve stationarity
+*   $q = 1$: only 1 previous value's error was included
+*   $p = 2$: two lagged values were leveraged
+
+The resulting model yielded [forecasted values](#forecasted-values) for the next twelve months, with an 80% confidence interval. The volume of scripts in the first forecasted month are anticipated to fall between 12.4M and 16.2M with 80% certainty.
 
 ## Assumptions
 >   What are your assumptions and limitations? Did you include any robustness checks?
 
+A big limitation in the data are the [non-normally distributed values](#distribution-1) of `Cost` and `Scripts`. [Logarithmic transforms](#distribution-2) were extremely helpful in resolving the issue but complicated interpretation of the model and forecasted values throughout. I'd be interested to learn more how this is handled in industry.
 
+Additionally, the data was presented with variables levels and grouped covariates for `Concession`, `Type`, and `ATC1/2`. It's likely a medicare perscription program manager would be more interested in the varying forcasts that make up these slices. Due to knowledge gap in this area, it was resolved via aggregation.
+
+It was also assumed that `auto.arima` would choose an optimal model. However, there was some suggestive evidence different values could have produced a similarly performant result but with more robustness. Ultimately, I ceded model choice to the algorithm. I could have run both and compared AICs.
 
 # Assignment Workflow
  
@@ -187,6 +207,7 @@ head(px_pivot)
 
 A great way to do visualize distribution is with a "raincloud" plot, which combines a traditional boxplot, scatter points, and a density shape. In this way, a complete understanding is had over the distribution of values. The below code is adopted from [Cedric Scherer's work](https://www.cedricscherer.com/2021/06/06/visualizing-distributions-with-raincloud-plots-and-how-to-create-them-with-ggplot2/).
 
+:::{#distribution-1}
 ```{r}
 ggplot(                                                                         # Setup ggplot object
     px_pivot, 
@@ -219,9 +240,11 @@ ggplot(                                                                         
         strip.text = element_text(color = "white", face = "bold")
     )
 ```
+:::
 
 Clearly the data are highly skewed. This opens up the possibility for a logarithmic transformation. Let's run the same code by using a log scale:
 
+:::{#distribution-2}
 ```{r}
 #| eval: true
 
@@ -257,6 +280,7 @@ ggplot(                                                                         
         strip.text = element_text(color = "white", face = "bold")
     )
 ```
+:::
 
 That's much improved! Such a transform may be a great way to improve our eventual forecasting model and better align with the assumptions of ARIMA.
 
@@ -284,6 +308,7 @@ head(px_trend)
 
 Let's now plot the trend for both measures. We'll apply a logarithmic transform right away since we know both measures are highly skewed.
 
+:::{#trend-plot}
 ```{r}
 ggplot(
     px_trend, 
@@ -301,6 +326,7 @@ ggplot(
         strip.text = element_text(color = "white", face = "bold")
     )
 ```
+:::
 
 We've got some nice plots now. Clearly the values are not stationary but that's a matter for the next section as we prepare the data for forecasting.
 
@@ -432,7 +458,7 @@ pacf(px_diff$Total_Cost_log_diff[-1])
 
 These plots show three (3) significant correlations so we would use $p=3$ in an ARIMA model.
 
-Of course, these values are slightly fluid. We could run multiple models testing different values and compare AIC values.
+Of course, these values are slightly fluid. We could run multiple models testing different values and comparing the resulting AIC. The model with the lowest AIC is the best performing.
 
 ## Forecasting model
 
@@ -456,4 +482,27 @@ Let's see how the models performed, starting with the forecast for `Scripts`. We
 checkresiduals(px_Scripts_fit)
 ```
 
-## Conclusion
+Interestingly, the model chose $d=2$ (we thought $d=1$ was sufficient), $q=1$ (same as our analysis), and $p=2$ (we estimated $p=3$). Looking at the plots, the model is only fair.
+
+We can take this model and plot the forecast:
+
+```{r}
+fitted_mod <- forecast(px_Scripts_fit, h=12, level = c(80))
+
+autoplot(fitted_mod) #+
+    #scale_y_continuous(trans = scales::transform_exp())
+```
+
+Remember, those y-axis values for total number of scripts are on a logarithmic scale. We can extract the forecasted values from the model and transform them back to a linear scale:
+
+:::{#forecasted-values}
+```{r}
+tibble(
+    lower = exp(fitted_mod$lower), 
+    mean = exp(fitted_mod$mean), 
+    upper = exp(fitted_mod$upper)
+)
+```
+:::
+
+We can interpret this as total scripts during the first forecasted month will fall between 12.4M and 16.2M with 80% certainty.
