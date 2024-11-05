@@ -1,0 +1,366 @@
+---
+title: "Boosted Trees | Food Delivery Times"
+description: "Leveraging boosted trees (XGBoost) in R to predict restaurant delivery times."
+author: "Adam Bushman"
+date: "11/5/2024"
+format: 
+    html:
+        toc: true
+        theme: simplex
+        smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
+---
+
+
+# Assignment Questions
+
+## Name
+>   What is your name? Include all team members if submitting as a group.
+
+Adam Bushman [u6049169]; no group members.
+
+
+## Perspective
+>   From what perspective ar eyou conducting the analysis? (Who are you? / Who are you working for?)
+
+I am a former data professional chasing a dream of owning a restaurant. While menu curation and delighting customers with my cuisine is a passion, the experience in my former career continually prompts me to measure activities in the restaurant and analyze them for decision making. What's most got me curious of late is the delivery program.
+
+Much of the value a restaurant proposes to customers is the experience of being waited on, dining with friends or family, and enjoying a beautifully presented and exquisitely tasting dish. 
+
+The proposition changes in dramatic fashion with take-out. Now a rewarding experience is first and foremost a quick delivery. Managing expectations is the name of the game in delivery. Even 5 minutes of underestimation could result in a negative review. 
+
+## Question
+>   What is your question?
+
+Can a predictive model be generated to 1) accurately predict time from order to delivery and 2) shed light on situations not-suitable for delivery? This would be valuable information as we work to make the delivery program as successful as our dine-in experience.
+
+## Data set
+>   Describe your dataset(s) including URL (if available)
+
+The data set is sourced from Posit via their [{modeldata}](hhttps://modeldata.tidymodels.org/reference/deliveries.html) package. The dataset itself is named *Food Delivery Time Data*. There is no mention of the original source of the data nor is their any mention of it being synthetically generated.
+
+## Predictor(s) and target(s)
+>   What is (are) your independent variable(s) and dependent variable(s)? Include variable type (binary, categorical, numeric).
+
+The dataset is nicely aligned with my needs as a restauranteer looking to optimize the delivery program. The dependent (target) variable in this dataset is `time_to_delivery`, defined as the time from initial order to receiving the food.
+
+Independent (predictor) variables come in two flavors (pardon the pun):
+
+1.   The dataset contains three (3) context-related variables: `hour` (of the day order was received), `day` (of the week order was received), and `distance`, the approximate number of miles between restaurant and delivery location.
+2.   Lastly, there exist 27 `item_` variables that measure the quantity of the corresponding menu item included in the order.
+
+There are just of 10,000 rows in the data. Additional information (including data types) can be found by referencing the [data dictionary](#data-dictionary).
+
+
+## Model resonability
+>   How are your variables suitable for your analysis method?
+
+
+
+## Conclusions
+>   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
+
+
+
+## Assumptions
+>   What are your assumptions and limitations? Did you include any robustness checks?
+
+
+
+# Assignment Workflow
+ 
+## Analysis Prep
+
+### Loading packages
+
+```{r}
+library('tidyverse')        # Wrapper for many convenient libraries
+library('modeldata')        # Contains data for the assignment
+library('skimr')            # Quickly summarise data
+library('gt')               # Render "great tables"
+
+library('xgboost')          # Package for leveraging boosted trees
+library('tidymodels')       # Wrapper for convenient modeling framework
+```
+
+### Loading the data
+
+We'll start off by referencing the "Food Delivery Times" data for the assignment that we're sourcing from the `{modeldata}` package.
+
+```{r}
+delivery_raw <- modeldata::deliveries       # Data for the assignment
+```
+
+With it loaded into the session, let's get a sense for what we're working with.
+
+### Data set inspection
+
+Right away, I like to get acquainted with the data set. That means understanding what each column seeks to describe, confirming the granularity of the rows, and getting my arms around structure, completeness, distribution, etc.
+
+The following data dictionary was included in the description of the dataset:
+
+```{r}
+#| include: false
+
+dict_list <- list(
+    list(variable = "time_to_delivery", datatype = "<numeric>", description = "Time from the initial order to receiving the food in minutes"), 
+    list(variable = "hour", datatype = "<numeric>", description = "The time, in decimal hours, of the order"), 
+    list(variable = "day", datatype = "<factor>", description = "The day of the week for the order"),  
+    list(variable = "distance", datatype = "<numeric>", description = "The approximate distance in miles between the restaurant and the delivery location."),  
+    list(variable = "item_##", datatype = "<integer>", description = "A set of 27 predictors that count the number of distinct menu items in the order") 
+)
+
+delivery_dict <- do.call(rbind, lapply(dict_list, as.data.frame))
+```
+
+::: {#data-dictionary}
+```{r}
+#| html-table-processing: none
+
+gt(delivery_dict) %>%                                   # Create a "great tables" (gt) object
+    cols_label(                                         # Rename some columns
+        variable = "Variable Name", 
+        datatype = "Data Type", 
+        description = "Variable Description"
+    ) %>%
+    tab_options(
+        column_labels.background.color = "#d9230f",     # Apply red header background
+        column_labels.font.weight = "bold",             # Bold headers
+        row.striping.background = '#FFFFFF'             # Remove row striping
+    )
+
+```
+:::
+
+Using the `{skimr}` package, we can get a comprehensive summary of the data.
+
+```{r}
+skim(delivery_raw)
+```
+<br>
+
+Initial observations include:
+
+*   Lorem ipsum:
+    *   Comment on completeness, skewness, data types, etc.
+
+
+## Simple Exploratory Data Analysis
+
+
+
+## Preprocessing
+
+### Data cleaning / Feature Engineering
+
+As mentioned, we'd be wise to transform and scale numeric variables that are highly skewed to the right. We'll do this for all but the target variable.
+
+We can do this fairly easy with the following code:
+
+```{r}
+hotel_clean <- 
+    hotel_raw |>
+    mutate(arrival_date_char = factor(as.character(arrival_date_num))) |>
+    mutate(across(
+        where(is.numeric) & !c(avg_price_per_room), 
+        ~as.numeric(scale(log(. + 0.01 * max(.))))
+    )) |>
+    select(-arrival_date_num)
+```
+
+```{r}
+glimpse(hotel_clean)
+```
+
+Now we have columns that are 1) logarithmically transformed to approximate the normal distribution and 2) scaled for normality (mean = 0, stdev = 1).
+
+We don't have any constants, doubles, or bijections in the data, so no need to account for those.
+
+
+## Model resources
+
+### Splitting for training/testing sets
+
+As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
+
+```{r}
+set.seed(819)                                                               # Set reproducible seed
+hotel_sampl <- sample_n(hotel_clean, ceiling(nrow(hotel_clean) * 0.25))     # Take a quarter of the data randomly
+split_obj <- initial_split(hotel_sampl, prop = 0.75)                        # Split object
+
+hotel_train <- training(split_obj)                                          # Split for training
+hotel_test <- testing(split_obj)                                            # Split for testing
+```
+
+::: {.callout-note}
+To expedite the computational process of cross-validating an SVM model, the data was trimmed by 75% via random sampling prior to training/testing splits.
+:::
+
+
+## Training and tuning
+
+### Cross validation tuning
+
+What we want to do is setup some cross validation for the hyperparameters needed by SVM, specifically *sigma* and *cost*. We can do that with `{caret}` and its `trainControl()` function:
+
+```{r}
+fit_summary <- function(data, lev = NULL, model = NULL) {
+  RMSE <- sqrt(mean((data$obs - data$pred)^2))
+  R2 <- cor(data$obs, data$pred)^2
+  
+  out <- c(rmse = RMSE, rsq = R2)
+  return(out)
+}
+
+fit_control <- trainControl(
+    method = "repeatedcv", 
+    number = 3, 
+    repeats = 3, 
+    summaryFunction = fit_summary
+)
+
+fit_grid <- expand.grid(
+    sigma = c(0.01, 0.1, 0.5), 
+    C = c(0.05, 1, 3)
+)
+```
+
+Next, we define an SVM model using these tuning and cross validation settings.
+
+```{r}
+svm_fit <- train(
+    avg_price_per_room ~ . -arrival_date, 
+    data = hotel_train, 
+    method = "svmRadial", 
+    trControl = fit_control, 
+    metric = "Rsquared", 
+    preProcess = NULL, 
+    tuneGrid = fit_grid
+)
+```
+
+
+```{r}
+svm_fit
+```
+
+The fitted model description gives us some good info:
+
+*   We see the values for sigma and cost (C) that we had defined in our tuning grid
+*   We see metric values we defined in the train function
+
+We can use this information to make judgements about the best hyper parameters.
+
+
+### Evaluating tuning
+
+Let's use the produced information to generate a plot. We want to see what happens to $RMSE$ and $R^2$ given the changes made to sigma and C.
+
+First, let's pivot the data to make plotting easier:
+
+```{r}
+results_df <- svm_fit$results |>
+    select(-c(rmseSD, rsqSD)) |>
+    pivot_longer(
+        cols = c("rmse", "rsq"),
+        names_to = "metric",
+        values_to = "metric_val"
+    ) |>
+    pivot_longer(
+        cols = c("sigma", "C"),
+        names_to = "hyperparameter",
+        values_to = "hyperparameter_val"
+    )
+
+results_df
+```
+
+Now let's generate a faceted plot:
+
+:::{#tuning-results}
+```{r}
+ggplot(
+    results_df, 
+    aes(hyperparameter_val, metric_val)
+) +
+    geom_line() +
+    geom_point() +
+    facet_grid(metric~hyperparameter, scales = "free") +
+    theme_minimal() +                                                           # Theme styling
+    theme(
+        panel.background = element_rect(color = "#707271"), 
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+:::
+
+We can look at this plot top to bottom, left to right.
+
+1.  Hyperparameter "C"
+    *   $RMSE$ oscilates high to low as as cost goes up
+    *   $R^2$ also jumps up and down as cost goes up
+    *   No clear indication of a threshold being crossed with cost
+2.  Sigma
+    *   $RMSE$ starts low with sigma being low and then spikes (remember, we want this error low)
+    *   $R^2$ does the opposite, starting high and the tanking (remember, we want this value high)
+    *   Clearly, we want Sigma to be low
+
+We'll proceed to use a custom model that balances both of these well: $C = 0.05$ and $sigma = 0.01$.
+
+
+## Final model
+
+### Define final model
+
+We'll create a custom SVM model using the hyperparameters evaluated above.
+
+```{r}
+svm_custom <- svm(
+    avg_price_per_room ~ . -arrival_date, 
+    data = hotel_train, 
+    cost = 0.05, 
+    sigma = 0.01
+)
+```
+
+
+### Predict on testing
+
+Let's proceed to predict values using the tuned model from above but on the testing data set.
+
+```{r}
+svm_pred <- predict(svm_custom, newdata = hotel_test)
+```
+
+Let's combine these values back with our original prices and print 10 random values:
+
+```{r}
+model_results <- 
+    hotel_test |>
+    select(actual_rate = avg_price_per_room) |>
+    mutate(pred_rate = svm_pred)
+
+model_results |>
+    sample_n(10)
+```
+
+
+## Results
+
+We can calculate the final $RMSE$ and $R^2$ on the predictions:
+
+:::{#final-results}
+```{r}
+list(
+    RMSE = sqrt(mean((model_results$actual_rate - model_results$pred_rate)^2)), 
+    R2 = cor(model_results$actual_rate, model_results$pred_rate)^2
+)
+```
+:::
