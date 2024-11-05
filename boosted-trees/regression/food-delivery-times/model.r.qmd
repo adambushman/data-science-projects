@@ -144,13 +144,121 @@ skim(delivery_raw)
 
 Initial observations include:
 
-*   Lorem ipsum:
-    *   Comment on completeness, skewness, data types, etc.
-
+*   We have a wealth of data
+    *   Over 10,000 rows and 31 columns
+*   All the data are complete
+    *   No missing values in any of the columns
+*   All variables look to be of the right data type
+*   As to be expected, the order counts have some skewness to them
+    *   Most of the time, an item is not ordered (i.e. `0`); highest order counts of an item are `3` or `4`
+    *   Time to delivery and distance are also skewed left
+    *   Since we are using a trees based approach, we shouldn't need to worry about approximating a normal distribution
 
 ## Simple Exploratory Data Analysis
 
+Let's do some additional exploration of the data.
 
+We saw that time to delivery ranged from ~12 mins to ~61. You'd have to imagine some items take longer to prepare than others. Let's generate a quick table to evaluate just that.
+
+```{r}
+delivery_raw |>
+    pivot_longer(
+        cols = tidyr::starts_with("item"), 
+        names_to = "item", 
+        values_to = "quantity"
+    ) |>
+    filter(quantity != 0) |>
+    group_by(item) |>
+    summarise(stats = list(summary(time_to_delivery))) |>
+    tidyr::unnest_wider(stats) |>
+    mutate(Range = Max. - Min.) |>
+    arrange(desc(Range)) |>
+    gt() |>
+    cols_label(                                                         # Rename some columns
+        item = "Menu Item", 
+        `1st Qu.` = "1st Quartile", 
+        `3rd Qu.` = "3rd Quartile"
+    ) %>%
+    tab_options(
+        column_labels.background.color = "#d9230f",                     # Apply red header background
+        column_labels.font.weight = "bold",                             # Bold headers
+        row.striping.background = '#FFFFFF'                             # Remove row striping
+    )
+```
+
+This table gives us some great info. Most menu items, in a *best case* scenario, take about the same amount of time to delivery (all of the min and 1st quartile values are about the same). There are no drastic *worst case* scenario as the longest delivery times are all about the same. There are a handful of menu items, most notable `item_19`, `item21`, `item_16`, and `item_05` that have notably more narrow range of delivery times. These menu items are far less sensitive.
+
+Another thing we can do is look at the total quantity of an order compared to delivery time. This we can do in pretty short order:
+
+```{r}
+delivery_raw |>
+    mutate(total_qty = rowSums(across(item_01:item_27))) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#BE0000') + 
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot"
+    )
+```
+
+If you squint hard, *maybe* you can see a relationship. Ultimately, it's confounded by distance. We could try the same thing but "bin" certain delivery ranges. Let's give that a go:
+
+```{r}
+delivery_raw |>
+    mutate(
+        total_qty = rowSums(across(item_01:item_27)), 
+        distance_bin = cut(distance, 6)
+    ) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#707271') + 
+    facet_wrap(~distance_bin, ncol = 2) +
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot", 
+        panel.background = element_rect(color = "#707271"), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+Interesting. It doesn't appear the total order quantity has a strong relationship to delivery time, even when controling for distance. Let's do this same thing but for day of the week:
+
+```{r}
+delivery_raw |>
+    mutate(
+        total_qty = rowSums(across(item_01:item_27))
+    ) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#707271') + 
+    facet_wrap(~day, nrow = 2) +
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot", 
+        panel.background = element_rect(color = "#707271"), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+Very interesting. We're so far not picking up on any potential relationships. This is shaping up as an ideal problem for a boosted tree.
 
 ## Preprocessing
 
