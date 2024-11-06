@@ -84,6 +84,7 @@ library('gt')               # Render "great tables"
 
 library('xgboost')          # Package for leveraging boosted trees
 library('tidymodels')       # Wrapper for convenient modeling framework
+library('vip')              # Generating important feature plots
 ```
 
 ### Loading the data
@@ -258,34 +259,21 @@ delivery_raw |>
     )
 ```
 
-Very interesting. We're so far not picking up on any potential relationships. This is shaping up as an ideal problem for a boosted tree.
+Very interesting. It seemse that the range of delivery time is day dependent but even controlling for that confounder, we aren't seeing any hint of a relationship between order quantity and delivery time. As a restauranteer, this is somewhat curious since larger orders *feel like* they are more intensive to cook and package. 
+
+### Conclusion
+
+We're so far not picking up on any potential relationships. This is shaping up as an ideal problem for a boosted tree.
 
 ## Preprocessing
 
 ### Data cleaning / Feature Engineering
 
-As mentioned, we'd be wise to transform and scale numeric variables that are highly skewed to the right. We'll do this for all but the target variable.
+As we've seen, there isn't really any cleaning or feature engineering to do on the dataset. Tree-based algorithms don't necessitate transformations for normal distributions or linear/polynomial relationships.
 
-We can do this fairly easy with the following code:
+Previous to the EDA work, it was hypothesized that creating a `total_qty` feature would be valuable. Based on our previous results, that seems to be an insignificant feature. We won't worry about that for now and just proceed to the next step.
 
-```{r}
-hotel_clean <- 
-    hotel_raw |>
-    mutate(arrival_date_char = factor(as.character(arrival_date_num))) |>
-    mutate(across(
-        where(is.numeric) & !c(avg_price_per_room), 
-        ~as.numeric(scale(log(. + 0.01 * max(.))))
-    )) |>
-    select(-arrival_date_num)
-```
-
-```{r}
-glimpse(hotel_clean)
-```
-
-Now we have columns that are 1) logarithmically transformed to approximate the normal distribution and 2) scaled for normality (mean = 0, stdev = 1).
-
-We don't have any constants, doubles, or bijections in the data, so no need to account for those.
+We will need to convert the `day` variable from factor to dummy/one-hot-encoded variables. However, we'll save that for the "recipe" step since `{tidymodels}` offers some real handy approaches to this.
 
 
 ## Model resources
@@ -295,147 +283,166 @@ We don't have any constants, doubles, or bijections in the data, so no need to a
 As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
 
 ```{r}
-set.seed(819)                                                               # Set reproducible seed
-hotel_sampl <- sample_n(hotel_clean, ceiling(nrow(hotel_clean) * 0.25))     # Take a quarter of the data randomly
-split_obj <- initial_split(hotel_sampl, prop = 0.75)                        # Split object
+set.seed(814)                                                               # Set reproducible seed
+split_obj <- initial_split(delivery_raw, prop = 0.75)                        # Split object
 
-hotel_train <- training(split_obj)                                          # Split for training
-hotel_test <- testing(split_obj)                                            # Split for testing
+delivery_train <- training(split_obj)                                          # Split for training
+delivery_test <- testing(split_obj)                                            # Split for testing
 ```
 
-::: {.callout-note}
-To expedite the computational process of cross-validating an SVM model, the data was trimmed by 75% via random sampling prior to training/testing splits.
-:::
+### Recipe
 
+We're going to practice using the `{tidymodels}` framework for this modeling exercise. There's a lot of neat features we can make use of, first of which is a "recipe". As a restauranteer, this always made sense to me. Just like a dish will call for ingredients and assembly steps, so does a modeling recipe.
 
-## Training and tuning
+```{r}
+delivery_rec <- recipe(time_to_delivery ~ ., delivery_train) |>
+    step_dummy(day)
+```
+
+The recipe now knows what our modeling formula is and is prepped for use of the training data. Next, we'll set up some cross validation.
+
 
 ### Cross validation tuning
 
-What we want to do is setup some cross validation for the hyperparameters needed by SVM, specifically *sigma* and *cost*. We can do that with `{caret}` and its `trainControl()` function:
+Cross validation is important to ensure the results of a single model isn't an outlier. We'd hate to get a singular amazing result by chance that didn't align with the true range of performance.
+
+Another important reason for cross validation, in particular for a boosted tree model, is choosing hyperparameters. While running models on each fold of the data, we'll simultaneously be searching for ideal hyperparameters that give the best performance. Hyperparameters such as:
+
+*   Number of trees
+*   The depth of trees
+*   The learning rate
+*   Etc.
+
+Let's first create our cross validation folds. We set `v = 5` because we want 5 folds:
 
 ```{r}
-fit_summary <- function(data, lev = NULL, model = NULL) {
-  RMSE <- sqrt(mean((data$obs - data$pred)^2))
-  R2 <- cor(data$obs, data$pred)^2
-  
-  out <- c(rmse = RMSE, rsq = R2)
-  return(out)
-}
-
-fit_control <- trainControl(
-    method = "repeatedcv", 
-    number = 3, 
-    repeats = 3, 
-    summaryFunction = fit_summary
-)
-
-fit_grid <- expand.grid(
-    sigma = c(0.01, 0.1, 0.5), 
-    C = c(0.05, 1, 3)
-)
+delivery_folds <- rsample::vfold_cv(delivery_train, v = 5)
 ```
 
-Next, we define an SVM model using these tuning and cross validation settings.
+### Model details
+
+Now we'll start defining the model and the hyperparameters to tune.
 
 ```{r}
-svm_fit <- train(
-    avg_price_per_room ~ . -arrival_date, 
-    data = hotel_train, 
-    method = "svmRadial", 
-    trControl = fit_control, 
-    metric = "Rsquared", 
-    preProcess = NULL, 
-    tuneGrid = fit_grid
+delivery_modl <- boost_tree(
+    trees = tune(), 
+    tree_depth = tune(), 
+    learn_rate = tune(), 
+    mtry = tune()
+) |>
+    set_engine("xgboost", verbosity = 0) |>
+    set_mode("regression")
+```
+
+Next we'll setup the tuning.
+
+### Hyperparameter tuning
+
+We'll set up a grid that keeps track of the unique combinations for these hyperparameters. As we run a model on the cross-validation folds, we'll use those combinations in the model. The resulting performance of the model we'll be saved. At the end, we'll get a sense for the combination giving the best results.
+
+```{r}
+delivery_tune_grid <- grid_regular(
+    trees(), 
+    tree_depth(), 
+    learn_rate(), 
+    mtry(c(1, ceiling(sqrt(30)))), 
+    levels = 4
 )
+
+head(delivery_tune_grid)
+tail(delivery_tune_grid)
 ```
 
+## Model training
+
+### Workflow configuration
+
+We next define a workflow that will take all these pieces and run them cohesively. We have a 1) recipe, 2) cross validation folds, 3) model, and 4) a hyperparameter tuning grid. Let's integrate them.
 
 ```{r}
-svm_fit
+delivery_wflw <-
+    workflow() |>
+    add_model(delivery_modl) |>
+    add_recipe(delivery_rec)
 ```
 
-The fitted model description gives us some good info:
-
-*   We see the values for sigma and cost (C) that we had defined in our tuning grid
-*   We see metric values we defined in the train function
-
-We can use this information to make judgements about the best hyper parameters.
-
-
-### Evaluating tuning
-
-Let's use the produced information to generate a plot. We want to see what happens to $RMSE$ and $R^2$ given the changes made to sigma and C.
-
-First, let's pivot the data to make plotting easier:
+Next, we'll tune the model like so (we'll setup parallel processing to make the tuning process go quicker):
 
 ```{r}
-results_df <- svm_fit$results |>
-    select(-c(rmseSD, rsqSD)) |>
-    pivot_longer(
-        cols = c("rmse", "rsq"),
-        names_to = "metric",
-        values_to = "metric_val"
-    ) |>
-    pivot_longer(
-        cols = c("sigma", "C"),
-        names_to = "hyperparameter",
-        values_to = "hyperparameter_val"
+doParallel::registerDoParallel(cores = 10)
+
+set.seed(2015)
+delivery_tune <-
+    delivery_wflw |>
+    tune_grid(
+        resamples = delivery_folds, 
+        grid = delivery_tune_grid, 
+        metrics = metric_set(rmse)
     )
-
-results_df
 ```
 
-Now let's generate a faceted plot:
+The model will calculate *Root Mean Squared Error* ($RMSE$) which will be used to determining the "best model" based on hyperparameters used.
+
+### Tuning Evaluation
+
+
+
+```{r}
+results_tune <- collect_metrics(delivery_tune) |> arrange(mean)
+
+head(results_tune)
+tail(results_tune)
+```
+
+We see the best models have an $RMSE$ of approximately `2` while the worst models are in the `26` range. We can create a visualization that puts this all together:
 
 :::{#tuning-results}
 ```{r}
 ggplot(
-    results_df, 
-    aes(hyperparameter_val, metric_val)
+    results_tune |> pivot_longer(
+        c(mtry, trees, tree_depth, learn_rate)
+    ) |> mutate(mean_bin = cut(mean, 10)), 
+    aes(x = value, y = mean, color = mean_bin)
 ) +
-    geom_line() +
-    geom_point() +
-    facet_grid(metric~hyperparameter, scales = "free") +
-    theme_minimal() +                                                           # Theme styling
+    geom_jitter(size = 5, alpha = 0.25) +
+    facet_wrap(~name, scales = "free") +
+    labs(
+        title = "Boosted trees hyperparameter values", 
+        x = "Hyperparameter Value", 
+        y = "RMSE", 
+        color = "RMSE Group"
+    ) +
+    theme_minimal() +
     theme(
+        plot.title.position = "plot", 
         panel.background = element_rect(color = "#707271"), 
-        axis.title.x = element_blank(), 
-        axis.title.y = element_blank(), 
-        panel.grid.major.x = element_blank(), 
         strip.background = element_rect(fill = "#BE0000"), 
-        strip.text = element_text(color = "white", face = "bold")
+        strip.text = element_text(color = "white", face = "bold"), 
+        legend.position = "top", 
+        legend.justification.left = "top"
     )
 ```
 :::
 
-We can look at this plot top to bottom, left to right.
+Each box corresponds to a hyperparameter. The x-axis tracks the hyperparameter value while the y-axis tracks $RMSE$. 
 
-1.  Hyperparameter "C"
-    *   $RMSE$ oscilates high to low as as cost goes up
-    *   $R^2$ also jumps up and down as cost goes up
-    *   No clear indication of a threshold being crossed with cost
-2.  Sigma
-    *   $RMSE$ starts low with sigma being low and then spikes (remember, we want this error low)
-    *   $R^2$ does the opposite, starting high and the tanking (remember, we want this value high)
-    *   Clearly, we want Sigma to be low
-
-We'll proceed to use a custom model that balances both of these well: $C = 0.05$ and $sigma = 0.01$.
+We'll proceed to use the best model: $mtry = 6$, $trees = 1,333$, $treeDepth = 5$, and $learningRate = 0.1$.
 
 
 ## Final model
 
 ### Define final model
 
-We'll create a custom SVM model using the hyperparameters evaluated above.
+We can pull the final model by selecting the "best" based on RMSE:
 
 ```{r}
-svm_custom <- svm(
-    avg_price_per_room ~ . -arrival_date, 
-    data = hotel_train, 
-    cost = 0.05, 
-    sigma = 0.01
-)
+best_modl <- delivery_tune |> select_best(metric = "rmse")
+```
+
+With that, we finalize our workflow:
+
+```{r}
+final_wflw <- delivery_wflw |> finalize_workflow(best_modl)
 ```
 
 
@@ -444,31 +451,41 @@ svm_custom <- svm(
 Let's proceed to predict values using the tuned model from above but on the testing data set.
 
 ```{r}
-svm_pred <- predict(svm_custom, newdata = hotel_test)
+final_fit <- final_wflw |> last_fit(split = split_obj)
 ```
 
-Let's combine these values back with our original prices and print 10 random values:
+We can now capture performance measures from the final fit:
 
+:::{#final-model-metrics}
 ```{r}
-model_results <- 
-    hotel_test |>
-    select(actual_rate = avg_price_per_room) |>
-    mutate(pred_rate = svm_pred)
-
-model_results |>
-    sample_n(10)
+final_fit |> collect_metrics()
 ```
+:::
 
+We're capturing an $R^2$ of `0.902`, meaning our model is explaining 90% of the variance on test data. This is shaping up to be a strong predictive model for `time_to_delivery`. 
+
+Let's move on to seeing what features are most important to predicting `time_to_delivery`. 
 
 ## Results
 
-We can calculate the final $RMSE$ and $R^2$ on the predictions:
+We already know that there's complex relationships and given boosted trees are a pretty opaque model, we won't be able to zero in on these relationships in a powerful way.
 
-:::{#final-results}
+However, we can generate a plot for important features that could be helpful in my quest to learn about operations of the restaurant that would setup the delivery program for success.
+
+
+
+:::{#important-features}
 ```{r}
-list(
-    RMSE = sqrt(mean((model_results$actual_rate - model_results$pred_rate)^2)), 
-    R2 = cor(model_results$actual_rate, model_results$pred_rate)^2
-)
+final_wflw |>
+    fit(data = delivery_train) |>
+    extract_fit_parsnip() |>
+    vip(geom = "col", aesthetics = list(fill = "#BE0000")) +
+    labs(
+        title = "Important Features of Boosted Trees"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot"
+    )
 ```
 :::
