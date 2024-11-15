@@ -203,6 +203,38 @@ ggplot() +
 #
 #
 #
+pca_scores <- ad_scaled * ad_eig_vec
+#
+#
+#
+pca_groups <- tibble(
+    class = ad_raw$Class, 
+    pc_1 = unlist(pca_scores[,1], use.names = FALSE), 
+    pc_2 = unlist(pca_scores[,2], use.names = FALSE), 
+    pc_114 = unlist(pca_scores[,114], use.names = FALSE), 
+    pc_115 = unlist(pca_scores[,115], use.names = FALSE)
+)
+#
+#
+#
+ggplot(pca_groups) +
+    geom_point(
+        aes(pc_1, pc_2, color = class)
+    ) +
+    theme_minimal()
+#
+#
+#
+ggplot(pca_groups) +
+    geom_point(
+        aes(pc_114, pc_115, color = class)
+    ) +
+    theme_minimal()
+#
+#
+#
+#
+#
 #
 #
 #
