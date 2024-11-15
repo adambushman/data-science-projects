@@ -1,0 +1,388 @@
+---
+title: "Principal Component Analysis | Alzheimer's disease data"
+description: "Leveraging principal component analysis for dimension reduction in Alzheimer's disease attributes."
+author: "Adam Bushman"
+date: "11/18/2024"
+format: 
+    html:
+        toc: true
+        theme: simplex
+        smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
+---
+
+
+# Assignment Questions
+
+## Name
+
+>   What is your name? Include all team members if submitting as a group.
+
+Adam Bushman [u6049169]; no group members.
+
+
+## Perspective
+
+>   From what perspective ar you conducting the analysis? (Who are you? / Who are you working for?)
+
+
+
+## Question
+
+>   What is your question?
+
+
+
+## Data set
+
+>   Describe your dataset(s) including URL (if available)
+
+Data sourced from Posit via their 
+[{modeldata}](https://modeldata.tidymodels.org/reference/ad_data.html) package, accessed November 14th, 2024. Named *[Alzheimer's disease data](https://modeldata.tidymodels.org/reference/ad_data.html)*, the data were originally sourced from *Kuhn, M., Johnson, K. (2013) Applied Predictive Modeling, Springer*, which derived observations from a clinical study of 333 patients. Citation:
+
+>   Craig-Schapiro R, Kuhn M, Xiong C, Pickering EH, Liu J, Misko TP, et al. (2011) Multiplexed Immunoassay Panel Identifies Novel CSF Biomarkers for Alzheimer's Disease Diagnosis and Prognosis. PLoS ONE 6(4): e18850.
+
+
+## Predictor(s) and target(s)
+
+>   What is (are) your independent variable(s) and dependent variable(s)? Include variable type (binary, categorical, numeric).
+
+...
+
+For a complete description of each feature and their data types, navigate to the [data dictionary](#data-dictionary).
+
+
+## Model resonability
+
+>   How are your variables suitable for your analysis method?
+
+...
+
+
+## Conclusions
+
+>   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
+
+...
+
+## Assumptions
+
+>   What are your assumptions and limitations? Did you include any robustness checks?
+
+...
+
+
+# Assignment Workflow
+ 
+## Analysis Prep
+
+### Loading packages
+
+```{r}
+
+library('tidyverse')        # Wrapper for many convenient libraries
+library('modeldata')        # Contains data for the assignment
+library('skimr')            # Quickly summarise data
+library('gt')               # Render "great tables"
+
+library('dataPreparation')  # Utilities for PCA prep 
+
+```
+
+### Loading the data
+
+We'll start off by referencing the "Sacramento Housing Data" for the assignment from the `{modeldata}` package.
+
+```{r}
+
+ad_raw <- modeldata::ad_data        # Data for the assignment
+
+```
+
+With it loaded into the session, let's get a sense for what we're working with.
+
+### Data set inspection
+
+Normally, I like to get acquainted a data set. That means understanding what each column seeks to describe, confirming the granularity of the rows, and getting my arms around structure, completeness, distribution, etc. We'll certainly do some of that, but this data set has over 130 columns.
+
+Posit, the company behind `{modeldata}`, included the following summary of features classes captured in the dataset:
+
+>   *   Demographic characteristics such as age and gender
+*   Apolipoprotein E genotype
+*   Protein measurements of Abeta, Tau, and a phosphorylated version of Tau (called pTau)
+*   Protein measurements of 124 exploratory biomarkers, and
+*   Clinical dementia scores
+
+
+Using the `{skimr}` package, we can get a comprehensive summary of the data.
+
+```{r}
+skim(ad_raw)
+```
+<br>
+
+Initial observations include:
+
+*   333 rows represent the number of patients in the clinical study
+*   We have two factor variables: `Genotype` and `Class`
+*   We then have over 100 variables that are all numeric and all complete. We have no way of knowing which of these are predictive and which are not. This is where PCA will come in.
+
+
+## Simple Exploratory Data Analysis
+
+...
+
+
+## Preprocessing
+
+For PCA to work properly, we need to standardize the values (i.e. mean of zero, standard deviation of 1). This will prevent any unwarranted weighting of certain variables to others.
+
+```{r}
+ad_numeric <- ad_raw |> select(where(is.numeric))
+```
+
+```{r}
+scale_obj <- build_scales(data_set = ad_numeric)
+ad_scaled <- fast_scale(data_set = ad_numeric, scales = scale_obj, verbose = TRUE)
+```
+
+We can now do PCA:
+
+```{r}
+ad_cov <- cov(ad_scaled)
+ad_eig <- eigen(ad_cov)
+
+ad_eig_val <- ad_eig$values
+ad_eig_vec <- ad_eig$vectors
+```
+
+```{r}
+var_expl <- round(ad_eig_val / sum(ad_eig_val), 3)
+cum_var_expl <- cumsum(var_expl)
+```
+
+```{r}
+pca_results <- data.frame(
+    var = cum_var_expl, 
+    idx = 1:length(cum_var_expl)
+)
+
+thresh <- c(0.5, 0.75, 0.9, 0.95)
+idx <- sapply(thresh, function(t) which.min(abs(cum_var_expl - t)))
+```
+
+```{r}
+ggplot() +
+    geom_area(aes(x = idx, y = var), pca_results) +
+    geom_vline()
+```
+
+## Model resources
+
+### Splitting for training/testing sets
+
+As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
+
+```{r}
+
+set.seed(819)                                                   # Set reproducible seed
+split_obj <- initial_split(sac_clean, prop = 0.75)              # Split object
+
+sac_train <- training(split_obj)                                # Split for training
+sac_test <- testing(split_obj)                                  # Split for testing
+
+```
+
+
+## Training and tuning
+
+### Fit a model
+
+What we want to do is use `cv.glmnet` and specify the cross-validation therein.
+
+```{r}
+
+nFolds <- 10
+foldid <- sample(rep(seq(nFolds), length.out = nrow(sac_train)))        # Randomize folds
+
+model_fit <- cv.glmnet(                                                 # Run elastic net
+    x = sac_train %>% select(-price_log) %>% data.matrix(),             # Predictors
+    y = sac_train$price_log,                                            # Target
+    family = "gaussian",                                                # Regression specification
+    type.measure = "mse",                                               # Measure of interest
+    nfolds = nFolds,                                                    # Number of cross-validation folds
+    foldid = foldid                                                     # Reproducible folds
+)
+
+```
+
+::: {.callout-note}
+Output results shared below may differ slightly from the descriptions thereafter due to the nature of `cv.glmnet`.
+:::
+
+
+```{r}
+
+model_fit
+
+```
+
+The fitted model description gives us some good info:
+
+*   We see two values of $\lambda$, one corresponding to the minimum (`min`) mean squared error and the other one (`1se`) corresponding to within one standard error of the minimum
+*   The index shows low far along the process each value was achieved
+*   Measure is our means squared error (MSE)
+*   SE is the standard error
+*   Nonzero tells us how many features/predictors remained in the model given the chosen lambda
+
+It's interesting to note that a near traditional OLS model gave the lowest MSE but a simpler model (thanks to a higher lambda) is nearly as good at a **~0.11** MSE.
+
+
+### Evaluating tuning
+
+Let's see if we can't plot these results:
+
+```{r}
+
+plot(model_fit)
+
+```
+
+`min` is indicated by the far left vertical line while `1se` is indicated by the far right vertical line.
+
+We're also able to look at the coefficients:
+
+```{r}
+
+coef(model_fit, s = "lambda.1se")
+
+```
+
+At first blush, `sqft_log` and `zip` make a lot of sense given size and location are some of the most natural drivers of price. The absense of `type` and inclusion of `longitude` is curious.
+
+
+## Final model
+
+### Predict on testing
+
+The next step is to train the previous model (`1se`) with the entire training data and then use it to predict training data values. Why `1se` and not `min`? We achieve a far simpler model with little impact to MSE.
+
+Let's setup the prediction:
+
+```{r}
+
+sac_pred <- predict(                            # Make predictions
+    model_fit,                                  # Original fit from above
+    newx = sac_test %>%                         # Using the testing data we haven't worked with yet
+        select(-price_log) %>% 
+        data.matrix(),
+    s = "lambda.1se"                            # Use the penalty within 1 standard error
+)
+
+head(sac_pred)
+
+```
+
+We now want to calculate the mean squared error. 
+
+### Evaluating metrics
+
+Ideally, we would be in the neighborhood of the values estimated from our cross-validation. Let's compile the predictions with the original values and do the necessary transformations.
+
+```{r}
+
+sac_test_r <-                                   
+    sac_test %>%
+    mutate(                                                     # Transform data back into natural scale
+        .pred = sac_pred[,1],                                   # Predicted value (log)
+        .pred_n = exp(.pred),                                   # Predicted value (natural)
+        sqft = exp(sqft_log),                                   # Sqft (natural)
+        price = exp(price_log),                                 # Sales price (natural)
+        diff = .pred_n - price                                  # Difference in price (natural)
+    )
+
+
+mean((sac_test_r$.pred - sac_test_r$price_log)^2)               # Calculate mean squared error on log scale
+
+```
+
+We are, in fact, achieving about the same MSE with the testing data (**~0.12**) as we did with the training (**~0.11**).
+
+
+## Results
+
+### High value properties
+
+The whole goal of this modeling exercise was to find high value properties, where our predicted price exceeds the sales price. 
+
+Let's generate a table of the top 10 properties in modeled value:
+
+::: {#property-list}
+```{r}
+
+sac_test_r %>%                                                          # Using the test data
+    arrange(desc(diff)) %>%                                             # Sort by the difference
+    select(city:type, sqft, price, .pred_n, diff) %>%                   # Select relevant columns
+    head(10) %>%                                                        # Top-10 property values
+    gt() %>%                                                            # Create a "great tables" object
+    cols_label(                                                         # Add column labes
+        city = "City", 
+        zip = "Zip Code", 
+        beds = "Bedroom No", 
+        baths = "Bathroom No", 
+        type = "Property Type", 
+        sqft = "Square Feet", 
+        price = "Sales Price", 
+        .pred_n = "Predicted Price", 
+        diff = "Modeled Value"
+    ) %>%
+    fmt_number(                                                         # Format sqft for decimals
+        columns = c(sqft), 
+        decimals = 0
+    ) %>%
+    fmt_currency(                                                       # Format pricing data for currency
+        columns = c(price, .pred_n, diff), 
+        decimals = 0, 
+        suffixing = TRUE
+    ) %>%
+    tab_options(                                                        # Format the column headers
+        column_labels.background.color = "#BE0000"
+    )
+
+```
+:::
+
+In the case of the very first property, our model suggests the property has a median worth of $208K but was sold at $57K. 1,512 square foot property with 4 bedrooms and 2 baths; at first blush, that does seem like great value.
+
+
+### Plotting high value properties
+
+A common next step would be to map the high value properties. We can do that with the `{leaflet}` package:
+
+::: {#property-map}
+```{r}
+
+sac_map <-                                                              
+    leaflet(height = 800, width = 800) %>%                              # Create a leaflet map object
+    addTiles() %>%                                                      # Setup tile layer
+    setView(lng = -121.478851, lat = 38.575764, zoom = 10)              # Localize zoom to Sacramento, CA
+
+sac_map <- 
+    sac_map %>%
+    addProviderTiles("CartoDB.Positron") %>%                            # Use a grayscale map theme
+    addCircleMarkers(                                                   # Add a circle point for every property
+        data = sac_test_r %>% arrange(desc(diff)) %>% head(30),         # Top-30, high value properties
+        lng = ~longitude,                                               # Mapped values
+        lat = ~latitude,                                                # Mapped values
+        radius = 6, 
+        color = "#BE0000", 
+        fillOpacity = 0.5
+    )
+
+sac_map
+
+```
+:::
