@@ -172,12 +172,32 @@ pca_results <- data.frame(
 
 thresh <- c(0.5, 0.75, 0.9, 0.95)
 idx <- sapply(thresh, function(t) which.min(abs(cum_var_expl - t)))
+
+pca_thresh <- data.frame(thresh, idx)
 #
 #
 #
 ggplot() +
-    geom_area(aes(x = idx, y = var), pca_results) +
-    geom_vline()
+    geom_area(aes(x = idx, y = var), pca_results, fill = "#E2E6E6") +
+    geom_vline(aes(xintercept = idx), pca_thresh, color = "#BE0000") +
+    geom_label(
+        aes(
+            x = idx, y = thresh, 
+            label = stringr::str_wrap(
+                paste("First", idx, "of", length(cum_var_expl), "principal components explain", thresh * 100, "% of overall variance"), 20
+            )
+        ), 
+        pca_thresh, 
+        color = "#BE0000"
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0,.05))) +
+    labs(
+        title = "Cumulative variance explained by first X principal component(s)", 
+        subtitle = paste0("A summary of PCA results compared to original column dimensions (", length(cum_var_expl), ")"), 
+        x = "Principal Component Index", 
+        y = "% of Variance Explained"
+    ) +
+    theme_minimal()
 #
 #
 #
