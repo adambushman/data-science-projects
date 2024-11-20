@@ -36,9 +36,11 @@ I am statistician working with a group of researchers dedicated to better unders
 
 Our research group has collected data from 333 individuals, some with cognitive impairment and others who are perfectly healthy. These attributes (columns) range from demographics to protein measurements to dementia scores.
 
-Our question is:
+The key question is:
 
->   
+>   What natural levels of alzheimer risk/exposure are isolated from available data?
+
+This is would be a valuable insight since detection prioritiy, therapy and medications could be tailored to each level uniquely.
 
 ## Data set
 
@@ -56,9 +58,9 @@ Data sourced from Posit via their
 
 This data set features 131 columns. Two factors and the rest numeric.
 
-One is a natural dependent variable, `Class`, indicating if the patient is symptomatic of cognitive impairment or healthy. Since this exercise is not concerned with predictive modeling, we'll largely treat this variable as an independent. All remaining variables are independent. 
+One is a natural dependent variable, `Class`, indicating if the patient is symptomatic of cognitive impairment or healthy. Since this exercise is not concerned with predictive modeling, we'll largely ignore this variable. All remaining variables are independent.
 
-The most important are...
+It's not clear which are most important for clustering patients at risk of or impaired with Alzheimer's.
 
 For a complete list of each feature and their data types, navigate to the [feature summary](#feature-summary).
 
@@ -67,20 +69,30 @@ For a complete list of each feature and their data types, navigate to the [featu
 
 >   How are your variables suitable for your analysis method?
 
-...
+The variables are suitable for the analysis since there's 1) high dimensionality where PCA can really shine and 2) it's not immediately clear what relationships work together for segmenting patients.
+
+Because there's an inherent class, a "ground-truth" that is binary, it may be that there's no number of clusters we're able to naturally discover just given the problem chosen. 
 
 
 ## Conclusions
 
 >   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
 
-...
+Initial clustering of Alzheimer attributes across patients performed poorly, with values centering near zero with a hierarchical and partition-based clustering approach.
+
+PCA appeared to be [very successful at reducing the dimensionality](#pca-plot). With just the first 5 principal components, we were able to capture 50% of the variance. With fewer than half of the principal components, 90% of the variance was captured.
+
+Looking at the "ground-truth" variable `Class` in the context of PCA, it was clear the impaired vs control groups are not easily differentiated, even with the first two principal components. 
+
+The final clustering with PCA results yielded even worse cluster "tightness" scores than before. This is counter-intuitive and perhaps indicative of some failed assumptions made on the data set itself (see below).
 
 ## Assumptions
 
 >   What are your assumptions and limitations? Did you include any robustness checks?
 
-...
+A clear assumption was that impaired and control patients could be differentiated using this data set. It's possible, and honestly likely, that they are not reliably segmented using the attribute values included here.
+
+Another assumption is that more than two clusters may be identified in the data. This is unsubstantiated since I hadn't the time to thoroughly test the number of clusters against the Hubert or D-index values. The fact that PCA worsened the performance of the clustering later on suggests that "3" is not a natural number of clusters. 
 
 
 # Assignment Workflow
@@ -95,7 +107,10 @@ library('modeldata')        # Contains data for the assignment
 library('skimr')            # Quickly summarise data
 library('gt')               # Render "great tables"
 
+library('kernlab')          # Weighted kernal k-means
 library('dataPreparation')  # Utilities for PCA prep
+library('dendextend')       # Working with dendrograms
+library('cluster')          # Generating silhouette measures
 ```
 
 ### Loading the data
@@ -126,7 +141,9 @@ Using the `{skimr}` package, we can get a comprehensive summary of the data.
 ```{r}
 skim(ad_raw)
 ```
+
 :::
+
 <br>
 
 Initial observations include:
@@ -143,14 +160,9 @@ Our goal is to learn about the interplay and imporance of the various features i
 
 We'll follow a typical implementation, where we cluster the raw data, perform PCA, and then implement the same clustering analysis on the PCA output. We'll then determine where the most meaningful interpretation is derived.
 
-### Clustering (phase 1)
+### Data Prep
 
-
-### Principal Component Analysis
-
-#### Preprocessing
-
-For PCA to work properly, we need to standardize the values (i.e. mean of zero, standard deviation of 1). This will prevent any unwarranted weighting of certain variables to others.
+In both clustering and PCA, it's important to have properly scaled variables. This ensures each variable is "on the same level" and not experiencing any bias from large numbers. The `{dataPreparation}` package helps with this tremendously.
 
 ```{r}
 ad_numeric <- ad_raw |> select(where(is.numeric))
@@ -161,7 +173,69 @@ scale_obj <- build_scales(data_set = ad_numeric)
 ad_scaled <- fast_scale(data_set = ad_numeric, scales = scale_obj, verbose = TRUE)
 ```
 
+With these variables properly processed, we can begin our analysis work.
+
+### Clustering (phase 1)
+
+Let's experiment with both a hierarchical & partition-based method for clustering. In this way, we can compare results and see how PCA may impact each individually.
+
+#### Hierarchical Clustering
+
+We'll use a standard Euclidean distance function and the *ward.D2* method. We can then "cut" the resulting dendrogram to get the number of classes.
+
+```{r}
+d <- dist(ad_scaled, method = "euclidean")
+fit_h <- hclust(d, method = "ward.D2")
+
+class_h <- cutree(fit_h, 3)
+```
+
+We generated 3 clusters. There's several ways to quantify similarity of observations to their cluster. One way is with "average silhouette width", where values near 1 indicate a tight cluster.
+
+```{r}
+sil_h <- silhouette(class_h, d)
+avg_sil_w_h <- mean(sil_h[,3])
+
+avg_sil_w_h
+```
+
+#### Partition Clustering
+
+Let's now cluster using a partition method, like Kernal K-Means. 
+
+```{r}
+kk_fit <- kkmeans(as.matrix(ad_scaled), centers = 3)
+```
+
+We'll then calculate the average silhouette width. We can't use the same distance measure because we're in a kernel space that differs from Euclidean distance. Let's generate a new function to create a distance matrix suitable for 'silhouette()':
+
+```{r}
+get_kernel_dist <- function(data) {
+    kernel_matrix <- kernelMatrix(rbfdot(sigma = 0.1), data)
+    pseudo_dist_matrix <- as.dist(sqrt(outer(diag(kernel_matrix), diag(kernel_matrix), "+") - 2 * kernel_matrix))
+
+    return(pseudo_dist_matrix)
+}
+```
+
+```{r}
+d_p <- get_kernel_dist(as.matrix(ad_scaled))
+sil_p <- silhouette(kk_fit, d_p)
+avg_sil_w_p <- mean(sil_p[,3])
+
+avg_sil_w_p
+```
+
+Both clustering algorithms yield nearly the same result: **~0.09**. On a scale of -1 to +1, these clustering algorithms aren't finding three, tight clusters. 
+
+Let's perform PCA and then retry.
+
+
+### Principal Component Analysis
+
 #### Calculation
+
+We'll use the scaled data, calculate covariance, and then use eigenvalues & eigenvectors to generate the variance explained by each principal component.
 
 ```{r}
 ad_cov <- cov(ad_scaled)
@@ -190,6 +264,7 @@ pca_thresh <- data.frame(thresh, idx)
 
 #### Results Plots
 
+:::{#pca-plot}
 ```{r}
 ggplot() +
     geom_area(aes(x = idx, y = var), pca_results, fill = "#E2E6E6") +
@@ -202,6 +277,7 @@ ggplot() +
             )
         ), 
         pca_thresh, 
+        size = 2, 
         color = "#BE0000"
     ) +
     scale_y_continuous(expand = expansion(mult = c(0,.05))) +
@@ -213,8 +289,9 @@ ggplot() +
     ) +
     theme_minimal()
 ```
+:::
 
-We could also generate a plot comparing the Alzheimer `class` against the first two principal components and the final two.
+We could also generate a plot comparing the Alzheimer `class` against the first two principal components and the final two. Let's get all principal components first and then organize those relevant into a data frame we can easily plot
 
 ```{r}
 pca_scores <- ad_scaled * ad_eig_vec
@@ -229,6 +306,8 @@ pca_groups <- tibble(
     pc_115 = unlist(pca_scores[,115], use.names = FALSE)
 )
 ```
+
+Let's now generate the graphs. Hopefully, there's some visual separation class. Additionally, we would expect to see more distinct separation between class with 1st/2nd dimensions vs 114th/115th.
 
 ```{r}
 ggplot(pca_groups) +
@@ -258,9 +337,39 @@ ggplot(pca_groups) +
     theme_minimal()
 ```
 
+The plots look very similar. Even with this dimensionality reduction and using the "ground-truth" class, we're not seeing a lot of power here. That's likely to limit our ability to improve clustering in phase 2.
 
 ### Clustering (phase 2)
 
+Let's use the PCA values and perform the same clustering from before. We're looking for values better than ~0.09.
+
+#### Hierarchical
+
+```{r}
+d2 <- dist(pca_scores, method = "euclidean")
+fit_h2 <- hclust(d, method = "ward.D2")
+class_h2 <- cutree(fit_h2, 3)
+
+sil_h2 <- silhouette(class_h2, d2)
+avg_sil_w_h2 <- mean(sil_h2[,3])
+
+avg_sil_w_h2
+```
+
+#### Partition Clustering
+
+```{r}
+kk_fit2 <- kkmeans(as.matrix(pca_scores), centers = 3)
+
+d_p2 <- get_kernel_dist(as.matrix(pca_scores))
+sil_p2 <- silhouette(kk_fit2, d_p2)
+avg_sil_w_p2 <- mean(sil_p2[,3])
+
+avg_sil_w_p2
+```
 
 ## Results
 
+We're seeing worse results in clustering after PCA. This is counter intuitive as PCA should reduce the noise to which clustering may be suceptible.
+
+It is possible that a value of "3" is clearly *not* the right number of clusters and PCA reinforces this takeaway. 
