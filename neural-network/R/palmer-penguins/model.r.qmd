@@ -238,9 +238,14 @@ We imputed two missing values for `bill_length_mm`. These observations were from
 We don't have "significant" imbalance in our target class, but a 45-35-20 isn't ideal either. It's possible a neural network won't be sensitive to the imbalance. We'll test this as part of our robustness checks so we'll generate another set of data balanced with *Synthetic Minority Oversampling Technique* or SMOTE:
 
 ```{r}
-idx = createDataPartition(peng_imputed$species, p = 0.7, list = FALSE)
-peng_smote_test_imb <- peng_imputed[-idx,]
-peng_smote_train_imb <- peng_imputed[idx,]
+set.seed(819)                                           # Set reproducible seed
+idx = createDataPartition(                              # Creat particion for the SMOTE data
+    peng_imputed$species, 
+    p = 0.7, 
+    list = FALSE
+)
+peng_smote_test_imb <- peng_imputed[-idx,]              # Imbalanced testing data
+peng_smote_train_imb <- peng_imputed[idx,]              # Imbalanced training data
 ```
 
 We're leaving 30% of the data imbalanced. This would be our pseudo "testing" set for the SMOTE data. Let's balance a pseudo "training" set.
@@ -248,8 +253,11 @@ We're leaving 30% of the data imbalanced. This would be our pseudo "testing" set
 Next, we preprocess the data via dummy encoding and then perform the smote balancing using the `{scutr}` package.
 
 ```{r}
-peng_dmy <- dummyVars("~ . -species", peng_smote_train_imb)
-peng_data_dmy <- data.frame(predict(peng_dmy, peng_smote_train_imb))
+peng_train_dmy <- dummyVars("~ . -species", peng_smote_train_imb)
+peng_train_data_dmy <- data.frame(predict(peng_dmy, peng_smote_train_imb))
+peng_test_dmy <- dummyVars("~ . -species", peng_smote_test_imb)
+peng_test_data_dmy <- data.frame(predict(peng_dmy, peng_smote_test_imb)) |>
+    mutate(species = peng_smote_test_imb$species)
 
 peng_smote_train_bal <- SCUT(
     peng_data_dmy |> mutate(species = peng_smote_train_imb$species), 
@@ -257,220 +265,185 @@ peng_smote_train_bal <- SCUT(
     undersample = undersample_kmeans, 
     usamp_opts = list(k = 7)
 )
-
-peng_smote_train_bal <- smote_results
 ```
 
 ```{r}
 table(peng_smote_train_bal$species) |> prop.table()
 ```
 
-Now, instead of a 45-35-20 split, we're at a nice 33-33-33 balance! 
+Now, instead of a 45-35-20 split, we're at a nice 33-33-33 balance! Let's finalize this all into an object suitable for `{tidymodels}`:
+
+```{r}
+smote_data <- peng_smote_train_bal |> bind_rows(peng_test_data_dmy)
+
+smote_split <- manual_rset(
+    splits = list(make_splits(list(
+        analysis = 1:nrow(peng_smote_train_bal),
+        assessment = (nrow(peng_smote_train_bal)+1):nrow(smote_data)),
+        data = smote_data
+    )), 
+    ids = "SMOTE_Split"
+)
+```
 
 
 ## Model resources
 
 ### Splitting for training/testing sets
 
-As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
+As is customary, we must split our data into training and testing sets. This will be done on the original, imbalanced data (we already split for SMOTE). We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
 
 ```{r}
+split_obj <- initial_split(peng_imputed, prop = 0.75)              # Split object
 
-set.seed(819)                                                   # Set reproducible seed
-split_obj <- initial_split(sac_clean, prop = 0.75)              # Split object
-
-sac_train <- training(split_obj)                                # Split for training
-sac_test <- testing(split_obj)                                  # Split for testing
-
+peng_train <- training(split_obj)                                # Split for training
+peng_test <- testing(split_obj)                                  # Split for testing
 ```
 
 
 ## Training and tuning
 
-### Fit a model
+### Recipe
 
-What we want to do is use `cv.glmnet` and specify the cross-validation therein.
+We're going to practice using the `{tidymodels}` framework for this modeling exercise. There's a lot of neat features we can make use of, first of which is a "recipe". A recipe will define the inputs/outputs, as well as any preprocessing
 
 ```{r}
+preg_recipe <- recipe(species ~ ., peng_train) |>
+    step_dummy(island, sex)
+```
 
-nFolds <- 10
-foldid <- sample(rep(seq(nFolds), length.out = nrow(sac_train)))        # Randomize folds
+The recipe now knows what our modeling formula is and is prepped for use of the training data. Next, we'll set up some cross validation.
 
-model_fit <- cv.glmnet(                                                 # Run elastic net
-    x = sac_train %>% select(-price_log) %>% data.matrix(),             # Predictors
-    y = sac_train$price_log,                                            # Target
-    family = "gaussian",                                                # Regression specification
-    type.measure = "mse",                                               # Measure of interest
-    nfolds = nFolds,                                                    # Number of cross-validation folds
-    foldid = foldid                                                     # Reproducible folds
+
+### Cross validation tuning
+
+Cross validation is important to ensure the results of a single model aren't an outlier. We'd hate to get a singular amazing result by chance that didn't align with the true range of performance. For the neural net, we want to try different tuning values; for "nnet" specifically, we're going to tune `hidden_units` (the nodes in the hidden layer), `penalty` (amount of regularization), and `epochs` (or number of cycles the model will run during fitting). 
+
+We'll generate a tuning grid for these hyperparameters (a table with the various combinations we can use for each model):
+
+```{r}
+peng_tune_grid <- grid_regular(
+    hidden_units(), 
+    penalty(), 
+    epochs(), 
+    levels = 4
 )
 
+head(peng_tune_grid)
+tail(peng_tune_grid)
 ```
 
-::: {.callout-note}
-Output results shared below may differ slightly from the descriptions thereafter due to the nature of `cv.glmnet`.
-:::
+Let's now create our cross validation folds. We set `v = 5` because we want 5 folds:
+
+```{r}
+peng_folds <- rsample::vfold_cv(peng_train, v = 5)
+```
+
+### Model setup
+
+Let's begin by setting up the model definition. We specify this model will be a classification neural network using `nnet` and tuning `hidden_units`, `penalty`, and `epochs`. 
+
+```{r}
+nn_mod01 <- mlp(
+    hidden_units = tune(), 
+    penalty = tune(), 
+    epochs = tune()
+) |>
+    set_engine("nnet") |>
+    set_mode("classification")
+
+nn_mod01 |> translate()
+```
+
+## Model training
+
+### Workflow configuration
+
+We next define a workflow that will take all these pieces and run them cohesively. We have a 1) recipe, 2) cross validation folds, 3) model, and 4) a hyperparameter tuning grid. Let's integrate them.
+
+```{r}
+peng_wflw <-
+    workflow() |>
+    add_model(nn_mod01) |>
+    add_recipe(preg_recipe)
+```
+
+Next, we'll tune the model like so (we'll setup parallel processing to make the tuning process go quicker):
+
+```{r}
+doParallel::registerDoParallel(cores = 3)
+
+set.seed(2015)
+peng_tune <-
+    peng_wflw |>
+    tune_grid(
+        resamples = peng_folds, 
+        grid = peng_tune_grid, 
+        metrics = metric_set(roc_auc)
+    )
+```
+
+The model will calculate *ROC/AUC* values which will help in determining the "best model" based on hyperparameters used.
+
+### Tuning Evaluation
+
+```{r}
+results_tune <- collect_metrics(peng_tune) |> arrange(mean)
+
+head(results_tune)
+tail(results_tune)
+```
+
+```{r}
+ggplot(
+    results_tune |> 
+        pivot_longer(
+            c(hidden_units:epochs)
+        ), 
+    aes(value, mean)
+) +
+    geom_line() + 
+    geom_point() +
+    facet_wrap(~name, nrow = 1, scales = "free")
+```
 
 
 ```{r}
-
-model_fit
-
+peng_best <- peng_tune |> select_best(metric = "roc_auc")
+peng_best
 ```
 
-The fitted model description gives us some good info:
-
-*   We see two values of $\lambda$, one corresponding to the minimum (`min`) mean squared error and the other one (`1se`) corresponding to within one standard error of the minimum
-*   The index shows low far along the process each value was achieved
-*   Measure is our means squared error (MSE)
-*   SE is the standard error
-*   Nonzero tells us how many features/predictors remained in the model given the chosen lambda
-
-It's interesting to note that a near traditional OLS model gave the lowest MSE but a simpler model (thanks to a higher lambda) is nearly as good at a **~0.11** MSE.
-
-
-### Evaluating tuning
-
-Let's see if we can't plot these results:
+Let's see if we get anything different with balanced data. We need a new recipe:
 
 ```{r}
+preg_recipe_02 <- recipe(species ~ ., peng_smote_train_bal)
 
-plot(model_fit)
+nn_mod02 <- mlp(
+    hidden_units = 7, 
+    penalty = 0.000464, 
+    epochs = 340
+) |>
+    set_engine("nnet") |>
+    set_mode("classification")
 
+peng_wflw_02 <-
+    workflow() |>
+    add_model(nn_mod02) |>
+    add_recipe(preg_recipe_02)
 ```
 
-`min` is indicated by the far left vertical line while `1se` is indicated by the far right vertical line.
-
-We're also able to look at the coefficients:
 
 ```{r}
+doParallel::registerDoParallel(cores = 3)
 
-coef(model_fit, s = "lambda.1se")
-
-```
-
-At first blush, `sqft_log` and `zip` make a lot of sense given size and location are some of the most natural drivers of price. The absense of `type` and inclusion of `longitude` is curious.
-
-
-## Final model
-
-### Predict on testing
-
-The next step is to train the previous model (`1se`) with the entire training data and then use it to predict training data values. Why `1se` and not `min`? We achieve a far simpler model with little impact to MSE.
-
-Let's setup the prediction:
-
-```{r}
-
-sac_pred <- predict(                            # Make predictions
-    model_fit,                                  # Original fit from above
-    newx = sac_test %>%                         # Using the testing data we haven't worked with yet
-        select(-price_log) %>% 
-        data.matrix(),
-    s = "lambda.1se"                            # Use the penalty within 1 standard error
+results <- fit_resamples(
+    peng_wflw_02, 
+    resamples = smote_split, 
+    metrics = metric_set(roc_auc)
 )
-
-head(sac_pred)
-
 ```
 
-We now want to calculate the mean squared error. 
-
-### Evaluating metrics
-
-Ideally, we would be in the neighborhood of the values estimated from our cross-validation. Let's compile the predictions with the original values and do the necessary transformations.
 
 ```{r}
-
-sac_test_r <-                                   
-    sac_test %>%
-    mutate(                                                     # Transform data back into natural scale
-        .pred = sac_pred[,1],                                   # Predicted value (log)
-        .pred_n = exp(.pred),                                   # Predicted value (natural)
-        sqft = exp(sqft_log),                                   # Sqft (natural)
-        price = exp(price_log),                                 # Sales price (natural)
-        diff = .pred_n - price                                  # Difference in price (natural)
-    )
-
-
-mean((sac_test_r$.pred - sac_test_r$price_log)^2)               # Calculate mean squared error on log scale
-
+collect_metrics(results)
 ```
-
-We are, in fact, achieving about the same MSE with the testing data (**~0.12**) as we did with the training (**~0.11**).
-
-
-## Results
-
-### High value properties
-
-The whole goal of this modeling exercise was to find high value properties, where our predicted price exceeds the sales price. 
-
-Let's generate a table of the top 10 properties in modeled value:
-
-::: {#property-list}
-```{r}
-
-sac_test_r %>%                                                          # Using the test data
-    arrange(desc(diff)) %>%                                             # Sort by the difference
-    select(city:type, sqft, price, .pred_n, diff) %>%                   # Select relevant columns
-    head(10) %>%                                                        # Top-10 property values
-    gt() %>%                                                            # Create a "great tables" object
-    cols_label(                                                         # Add column labes
-        city = "City", 
-        zip = "Zip Code", 
-        beds = "Bedroom No", 
-        baths = "Bathroom No", 
-        type = "Property Type", 
-        sqft = "Square Feet", 
-        price = "Sales Price", 
-        .pred_n = "Predicted Price", 
-        diff = "Modeled Value"
-    ) %>%
-    fmt_number(                                                         # Format sqft for decimals
-        columns = c(sqft), 
-        decimals = 0
-    ) %>%
-    fmt_currency(                                                       # Format pricing data for currency
-        columns = c(price, .pred_n, diff), 
-        decimals = 0, 
-        suffixing = TRUE
-    ) %>%
-    tab_options(                                                        # Format the column headers
-        column_labels.background.color = "#BE0000"
-    )
-
-```
-:::
-
-In the case of the very first property, our model suggests the property has a median worth of $208K but was sold at $57K. 1,512 square foot property with 4 bedrooms and 2 baths; at first blush, that does seem like great value.
-
-
-### Plotting high value properties
-
-A common next step would be to map the high value properties. We can do that with the `{leaflet}` package:
-
-::: {#property-map}
-```{r}
-
-sac_map <-                                                              
-    leaflet(height = 800, width = 800) %>%                              # Create a leaflet map object
-    addTiles() %>%                                                      # Setup tile layer
-    setView(lng = -121.478851, lat = 38.575764, zoom = 10)              # Localize zoom to Sacramento, CA
-
-sac_map <- 
-    sac_map %>%
-    addProviderTiles("CartoDB.Positron") %>%                            # Use a grayscale map theme
-    addCircleMarkers(                                                   # Add a circle point for every property
-        data = sac_test_r %>% arrange(desc(diff)) %>% head(30),         # Top-30, high value properties
-        lng = ~longitude,                                               # Mapped values
-        lat = ~latitude,                                                # Mapped values
-        radius = 6, 
-        color = "#BE0000", 
-        fillOpacity = 0.5
-    )
-
-sac_map
-
-```
-:::
