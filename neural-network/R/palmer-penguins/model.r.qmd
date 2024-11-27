@@ -111,7 +111,7 @@ library('gt')               # Render "great tables"
 
 library('nnet')             # Loading neural network library
 library('VIM')              # Nearest neighbors imputation
-library('scutr')             # Library for generating a balanced data set w/ SMOTE
+library('themis')           # Library for generating a balanced data set ROSE
 library('caret')            # Miscellaneous modeling functions
 ```
 
@@ -233,11 +233,20 @@ print(get_imputed(bill_length_mm_imp))
 
 We imputed two missing values for `bill_length_mm`. These observations were from completely diferent species and islands. The mean value we may have imputed is **43.9**, which likely would have lost some relationship value. The conditional mean by species at **38.8** and **47.5** do confirm our spread is about right. Unknown if that would have been a better value. We could test a model's sensitivity to this imputation later.
 
-### Balancing
-
-We don't have "significant" imbalance in our target class, but a 45-35-20 isn't ideal either. It's possible a neural network won't be sensitive to the imbalance. We'll test this as part of our robustness checks so we'll generate another set of data balanced with *Synthetic Minority Oversampling Technique* or SMOTE:
+We'll remove the flags and save the variables:
 
 ```{r}
+peng_clean <- peng_imputed |> select(-c(sex_imp:body_mass_g_imp))
+```
+
+### Balancing
+
+We don't have "significant" imbalance in our target class, but a 45-35-20 isn't ideal either. It's possible a neural network won't be sensitive to the imbalance. We'll test this as part of our robustness checks so we'll generate another set of data balanced with *Synthetic Minority Oversampling Technique* or SMOTE.
+
+We'll save this for later when we generate a "recipe". We'll use the `{themis}` package via `step_smote()`.
+
+```{r}
+#| eval: false
 set.seed(819)                                           # Set reproducible seed
 idx = createDataPartition(                              # Creat particion for the SMOTE data
     peng_imputed$species, 
@@ -253,14 +262,15 @@ We're leaving 30% of the data imbalanced. This would be our pseudo "testing" set
 Next, we preprocess the data via dummy encoding and then perform the smote balancing using the `{scutr}` package.
 
 ```{r}
+#| eval: false
 peng_train_dmy <- dummyVars("~ . -species", peng_smote_train_imb)
-peng_train_data_dmy <- data.frame(predict(peng_dmy, peng_smote_train_imb))
+peng_train_data_dmy <- data.frame(predict(peng_train_dmy, peng_smote_train_imb))
 peng_test_dmy <- dummyVars("~ . -species", peng_smote_test_imb)
-peng_test_data_dmy <- data.frame(predict(peng_dmy, peng_smote_test_imb)) |>
+peng_test_data_dmy <- data.frame(predict(peng_test_dmy, peng_smote_test_imb)) |>
     mutate(species = peng_smote_test_imb$species)
 
 peng_smote_train_bal <- SCUT(
-    peng_data_dmy |> mutate(species = peng_smote_train_imb$species), 
+    peng_train_data_dmy |> mutate(species = peng_smote_train_imb$species), 
     "species", 
     undersample = undersample_kmeans, 
     usamp_opts = list(k = 7)
@@ -268,12 +278,14 @@ peng_smote_train_bal <- SCUT(
 ```
 
 ```{r}
+#| eval: false
 table(peng_smote_train_bal$species) |> prop.table()
 ```
 
 Now, instead of a 45-35-20 split, we're at a nice 33-33-33 balance! Let's finalize this all into an object suitable for `{tidymodels}`:
 
 ```{r}
+#| eval: false
 smote_data <- peng_smote_train_bal |> bind_rows(peng_test_data_dmy)
 
 smote_split <- manual_rset(
@@ -294,7 +306,7 @@ smote_split <- manual_rset(
 As is customary, we must split our data into training and testing sets. This will be done on the original, imbalanced data (we already split for SMOTE). We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
 
 ```{r}
-split_obj <- initial_split(peng_imputed, prop = 0.75)              # Split object
+split_obj <- initial_split(peng_clean, prop = 0.75)              # Split object
 
 peng_train <- training(split_obj)                                # Split for training
 peng_test <- testing(split_obj)                                  # Split for testing
@@ -313,6 +325,14 @@ preg_recipe <- recipe(species ~ ., peng_train) |>
 ```
 
 The recipe now knows what our modeling formula is and is prepped for use of the training data. Next, we'll set up some cross validation.
+
+Let's also generate another recipe that will feature the `step_smote()`.
+
+```{r}
+preg_recipe_02 <- recipe(species ~ ., peng_train) |>
+    step_dummy(island, sex) |>
+    step_smote(species, over_ratio = 0.855)
+```
 
 
 ### Cross validation tuning
@@ -416,34 +436,43 @@ peng_best
 Let's see if we get anything different with balanced data. We need a new recipe:
 
 ```{r}
-preg_recipe_02 <- recipe(species ~ ., peng_smote_train_bal)
-
-nn_mod02 <- mlp(
-    hidden_units = 7, 
-    penalty = 0.000464, 
-    epochs = 340
-) |>
-    set_engine("nnet") |>
-    set_mode("classification")
-
 peng_wflw_02 <-
     workflow() |>
     add_model(nn_mod02) |>
     add_recipe(preg_recipe_02)
 ```
 
+```{r}
+peng_tune_02 <-
+    peng_wflw_02 |>
+    tune_grid(
+        resamples = peng_folds, 
+        grid = peng_tune_grid, 
+        metrics = metric_set(roc_auc)
+    )
+```
+
+The model will calculate *ROC/AUC* values which will help in determining the "best model" based on hyperparameters used.
+
+### Tuning Evaluation
+
+```{r}
+results_tune <- collect_metrics(peng_tune) |> arrange(mean)
+
+head(results_tune)
+tail(results_tune)
+```
 
 ```{r}
 doParallel::registerDoParallel(cores = 3)
 
-results <- fit_resamples(
+bal_results <- fit_resamples(
     peng_wflw_02, 
-    resamples = smote_split, 
+    resamples = peng_folds, 
     metrics = metric_set(roc_auc)
 )
 ```
 
-
 ```{r}
-collect_metrics(results)
+collect_metrics(bal_results)
 ```
