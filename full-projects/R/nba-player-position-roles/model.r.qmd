@@ -1,0 +1,212 @@
+---
+title: "Position/role classification of incoming NBA prospects"
+description: "Leveraging multiple machine learning methods in R to cluster for player positions/roles and predict the same for incoming NBA prospects."
+author: "Adam Bushman"
+date: "12/12/2024"
+format: 
+    html:
+        toc: true
+        theme: simplex
+        smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
+---
+
+
+# Assignment Workflow
+
+## Organizational Theory
+
+## Data Prep
+
+### Load Libraries & Data Set
+
+```{r}
+library('tidyverse')
+library('dataPreparation')
+
+library('kernlab')          # Weighted kernal k-means
+library('dendextend')       # Working with dendrograms
+library('cluster')          # Generating silhouette measures
+
+setwd('full-projects/R/nba-player-position-roles')
+```
+
+Import the data
+
+```{r}
+nba_stats <- read.csv('nba-player-stats_first-5-seasons.csv')
+```
+
+```{r}
+glimpse(nba_stats)
+```
+
+```{r}
+nba_stats <- nba_stats |>
+    mutate(o_3pp = ifelse(is.na(o_3pp), 0, o_3pp))
+```
+
+
+### Scale Variables
+
+```{r}
+nba_numeric <- nba_stats |> select(where(is.numeric))
+nba_ids <- nba_stats |> select(where(is.character))
+```
+
+Scale the numeric variables:
+
+```{r}
+nba_scaled <- scale(nba_numeric)
+```
+
+### Principal Component Analysis
+
+Using the scaled variables, let's perform PCA. We'll try to cluster with and without PCA. We'll have both data set versions at our disposal for clustering.
+
+```{r}
+library('FactoMineR')
+```
+
+```{r}
+nba_pca <- princomp(nba_scaled)
+```
+
+```{r}
+summary(nba_pca)
+```
+
+We have 38 source variables so 38 principal components. The first 5 components explain 82% of variance. The first 9 explain 91% of the variance. The first 13 principal components explain 95%. That's just 1/3 of our original number of features. 
+
+PCA did a good job at 1) reducing dimensionality and 2) eliminating any colinearity of features. 
+
+Let's save our results:
+
+```{r}
+nba_pca_data <- as.data.frame(nba_pca$scores)
+```
+
+
+## Clustering
+
+Let's try to cluster these observations.
+
+Historically, basketball has used 5 positions. In modern times, this has been reduced to approximately 3. Let's use 3 as our minimum and 12 as our maximum. Let's try a few different clustering techniques.
+
+```{r}
+clustering_grid <- data.frame(
+    clusters = 3:12
+)
+```
+
+We'll also need a couple of functions for later:
+
+```{r}
+calc_wss <- function(cluster_assignments, data) {
+    wss <- 0
+    for (j in unique(cluster_assignments)) {
+        # Subset data for cluster j
+        cluster_points <- data[cluster_assignments == j, , drop = FALSE]
+        # Handle single-point clusters
+        if (nrow(cluster_points) == 1) {
+            cluster_centroid <- cluster_points
+        } else {
+            cluster_centroid <- colMeans(cluster_points)
+        }
+        # Sum squared distances to the centroid
+        wss <- wss + sum(rowSums((cluster_points - cluster_centroid)^2))
+    }
+    return(wss)
+}
+
+calc_avg_sil <- function(fit) {
+    sil <- silhouette(fit, dist)
+    avg_sil <- mean(sil[,3])
+    return(avg_sil)
+}
+
+```
+
+### Partition Clustering
+
+Let's setup a function to run a KMeans cluster and generate some metrics:
+
+```{r}
+cluster_kmeans <- function(k, data, dist) {
+    # Run the algorithm
+    fit <- kkmeans(
+        as.matrix(data), 
+        centers = k
+    )
+    cluster_assignments <- as.vector(fit)
+
+    wss <- calc_wss(cluster_assignments, data)
+    avg_sil <- calc_avg_sil(fit)
+    return(list("wss" = wss, "avg_sil" = avg_sil))
+}
+```
+
+We need to setup a kernel distance function that we can use for kkmeans:
+
+```{r}
+get_kernel_dist <- function(data) {
+    kernel_matrix <- kernelMatrix(rbfdot(sigma = 0.1), data)
+    pseudo_dist_matrix <- as.dist(sqrt(outer(diag(kernel_matrix), diag(kernel_matrix), "+") - 2 * kernel_matrix))
+
+    return(pseudo_dist_matrix)
+}
+
+kk_scaled_dist <- get_kernel_dist(as.matrix(nba_scaled))
+kk_pca_dist <- get_kernel_dist(as.matrix(nba_pca_data))
+```
+
+
+### Hierarchical Clustering
+
+Let's do the same thing but for `hclust`:
+
+```{r}
+cluster_hclust <- function(k, data, dist) {
+    # Run the algorithm
+    fit <- hclust(
+        dist, 
+        method = "ward.D2"
+    )
+    cluster_assignments <- cutree(fit, 3)
+
+    wss <- calc_wss(cluster_assignments, data)
+    avg_sil <- calc_avg_sil(cluster_assignments)
+    return(list("wss" = wss, "avg_sil" = avg_sil))
+}
+```
+
+We'll default to a standard Euclidean distance metric
+
+```{r}
+hc_scaled_dist <- dist(nba_scaled, method = "euclidean")
+```
+
+
+Let's now generate our clusters!
+
+```{r}
+clustering_grid <-
+    clustering_grid |>
+    mutate(
+        hclust = map(clusters, ~cluster_hclust(.x, nba_scaled, hc_scaled_dist)), 
+        kkmeans = map(clusters, ~cluster_kmeans(.x, nba_scaled, kk_scaled_dist))
+    )
+```
+
+```{r}
+clustering_grid |>
+    tidyr::unnest_longer("kkmeans_pca") |>
+    ggplot(
+        aes(x = as.factor(clusters), y = kkmeans_pca)
+    ) +
+        geom_col() +
+        facet_wrap(~kkmeans_pca_id, nrow = 1, scales = "free")
+```

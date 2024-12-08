@@ -71,8 +71,8 @@ The variables chosen above are the extent of the dataset (all features used). Th
 
 *   Multiclass classification
     *   There are likely to be some complex relationships to explain differences in `species`
-*   Non-linear relationships
-    *   
+*   Imbalanced data
+    *   While we can and did test our results with balanced data, a neural network is more insensitive to this issue
 
 
 ## Conclusions
@@ -81,8 +81,9 @@ The variables chosen above are the extent of the dataset (all features used). Th
 
 #### Model effectiveness
 
-...
+The model was [highly effective](#final-model-metrics) at classifying unknown penguin species, achieving near perfect accuracy and AUC values. 
 
+We performed extensive hyperparameter tuning and cross-validation testing. We found [multiple combinations yielded similar results](#tuning-results).
 
 ## Assumptions
 
@@ -90,10 +91,15 @@ The variables chosen above are the extent of the dataset (all features used). Th
 
 ### Assumptions made throughout the analysis
 
-...
+*   First assumption made was that neural network is the "proper" choice; likely there are simpler models that provide other benefits that could be just as robust. However, we're looking to practice.
+*   Next assumption was that imputation of missing values was feasible. Because we know these are like-species and the values can't actually be missing or non-existent, it felt reasonable to impute via kNN.
 
 
 ### Robustness checks
+
+*   We performed extensive resampling over a long hyperparameter tuning grid and multiple cross validation folds.
+*   We balanced the data using SMOTE to see if results improved/changed. They did not, therefore confidence in results was increased.
+*   Though not completed in this workbook, another way to check robustness would have been classification via a random forest model. Assuming we got highly performant AUC and F-measure values, we would be extra confident in the results.
 
 
 # Assignment Workflow
@@ -185,10 +191,6 @@ Initial observations include:
     *   `species` and `island` have roughly 45-35-20 balancing each; one robustness check we can make later is to balance `species` in the training data
 
 
-## Simple Exploratory Data Analysis
-
-
-
 ## Preprocessing
 
 ### Data cleaning
@@ -233,7 +235,7 @@ print(get_imputed(bill_length_mm_imp))
 
 We imputed two missing values for `bill_length_mm`. These observations were from completely diferent species and islands. The mean value we may have imputed is **43.9**, which likely would have lost some relationship value. The conditional mean by species at **38.8** and **47.5** do confirm our spread is about right. Unknown if that would have been a better value. We could test a model's sensitivity to this imputation later.
 
-We'll remove the flags and save the variables:
+We could do the same for each of the remaining instances for which we imputed data. But this is satisfactory enough. Now, we'll just remove the flags and save the variables:
 
 ```{r}
 peng_clean <- peng_imputed |> select(-c(sex_imp:body_mass_g_imp))
@@ -245,65 +247,12 @@ We don't have "significant" imbalance in our target class, but a 45-35-20 isn't 
 
 We'll save this for later when we generate a "recipe". We'll use the `{themis}` package via `step_smote()`.
 
-```{r}
-#| eval: false
-set.seed(819)                                           # Set reproducible seed
-idx = createDataPartition(                              # Creat particion for the SMOTE data
-    peng_imputed$species, 
-    p = 0.7, 
-    list = FALSE
-)
-peng_smote_test_imb <- peng_imputed[-idx,]              # Imbalanced testing data
-peng_smote_train_imb <- peng_imputed[idx,]              # Imbalanced training data
-```
-
-We're leaving 30% of the data imbalanced. This would be our pseudo "testing" set for the SMOTE data. Let's balance a pseudo "training" set.
-
-Next, we preprocess the data via dummy encoding and then perform the smote balancing using the `{scutr}` package.
-
-```{r}
-#| eval: false
-peng_train_dmy <- dummyVars("~ . -species", peng_smote_train_imb)
-peng_train_data_dmy <- data.frame(predict(peng_train_dmy, peng_smote_train_imb))
-peng_test_dmy <- dummyVars("~ . -species", peng_smote_test_imb)
-peng_test_data_dmy <- data.frame(predict(peng_test_dmy, peng_smote_test_imb)) |>
-    mutate(species = peng_smote_test_imb$species)
-
-peng_smote_train_bal <- SCUT(
-    peng_train_data_dmy |> mutate(species = peng_smote_train_imb$species), 
-    "species", 
-    undersample = undersample_kmeans, 
-    usamp_opts = list(k = 7)
-)
-```
-
-```{r}
-#| eval: false
-table(peng_smote_train_bal$species) |> prop.table()
-```
-
-Now, instead of a 45-35-20 split, we're at a nice 33-33-33 balance! Let's finalize this all into an object suitable for `{tidymodels}`:
-
-```{r}
-#| eval: false
-smote_data <- peng_smote_train_bal |> bind_rows(peng_test_data_dmy)
-
-smote_split <- manual_rset(
-    splits = list(make_splits(list(
-        analysis = 1:nrow(peng_smote_train_bal),
-        assessment = (nrow(peng_smote_train_bal)+1):nrow(smote_data)),
-        data = smote_data
-    )), 
-    ids = "SMOTE_Split"
-)
-```
-
 
 ## Model resources
 
 ### Splitting for training/testing sets
 
-As is customary, we must split our data into training and testing sets. This will be done on the original, imbalanced data (we already split for SMOTE). We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
+As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
 
 ```{r}
 split_obj <- initial_split(peng_clean, prop = 0.75)              # Split object
@@ -317,22 +266,24 @@ peng_test <- testing(split_obj)                                  # Split for tes
 
 ### Recipe
 
-We're going to practice using the `{tidymodels}` framework for this modeling exercise. There's a lot of neat features we can make use of, first of which is a "recipe". A recipe will define the inputs/outputs, as well as any preprocessing
+We're going to practice using the `{tidymodels}` framework for this modeling exercise. There's a lot of neat features we can make use of, first of which is a "recipe". A recipe will define the inputs/outputs, as well as any preprocessing necessary for the model.
+
+This is our main recipe:
 
 ```{r}
 preg_recipe <- recipe(species ~ ., peng_train) |>
     step_dummy(island, sex)
 ```
 
-The recipe now knows what our modeling formula is and is prepped for use of the training data. Next, we'll set up some cross validation.
-
-Let's also generate another recipe that will feature the `step_smote()`.
+The recipe now knows what our modeling formula is and is prepped for use of the training data. Let's also generate a recipe featuring the `step_smote()`:
 
 ```{r}
 preg_recipe_02 <- recipe(species ~ ., peng_train) |>
     step_dummy(island, sex) |>
     step_smote(species, over_ratio = 0.855)
 ```
+
+Next, we'll set up some cross validation.
 
 
 ### Cross validation tuning
@@ -350,18 +301,19 @@ peng_tune_grid <- grid_regular(
 )
 
 head(peng_tune_grid)
-tail(peng_tune_grid)
 ```
 
-Let's now create our cross validation folds. We set `v = 5` because we want 5 folds:
+Let's now create our cross validation folds. We set `v = 5` to have 5 folds. This means we'll run a model for each combination of hyperparameters 5 times. The average (or mean) performance metric will be our result:
 
 ```{r}
 peng_folds <- rsample::vfold_cv(peng_train, v = 5)
+peng_folds
 ```
+
 
 ### Model setup
 
-Let's begin by setting up the model definition. We specify this model will be a classification neural network using `nnet` and tuning `hidden_units`, `penalty`, and `epochs`. 
+Let's begin the modeling phase by setting up the model definition. We specify this model will be a classification neural network using `nnet` and tuning `hidden_units`, `penalty`, and `epochs`. This is nicely explained for us in the "translation".
 
 ```{r}
 nn_mod01 <- mlp(
@@ -374,6 +326,9 @@ nn_mod01 <- mlp(
 
 nn_mod01 |> translate()
 ```
+
+We'll reuse this same definition for an imbalanced and balanced cross-validated training set. A "workflow" will tie these pieces together.
+
 
 ## Model training
 
@@ -399,48 +354,87 @@ peng_tune <-
     tune_grid(
         resamples = peng_folds, 
         grid = peng_tune_grid, 
-        metrics = metric_set(roc_auc)
+        metrics = metric_set(roc_auc, f_meas)
     )
 ```
 
-The model will calculate *ROC/AUC* values which will help in determining the "best model" based on hyperparameters used.
+The model will calculate both *ROC/AUC* and *F-measure* values which will help in determining the "best model" based on hyperparameters used.
 
-### Tuning Evaluation
+### Tuning evaluation
+
+It's time to see how the model did. We "collect metrics" and then arrange them in order 
+
+:::{#tuning-results}
+```{r}
+results_tune <- collect_metrics(peng_tune) |> arrange(desc(mean))
+head(results_tune)
+```
+:::
+
+It looks like the top models had both an *AUC* and *F-measure* near 1. That indicates the model is practically perfect at classifying unseen penguin species based on what it has learned from the relationship between species and the independent variables.
+
+If we look at the bottom of the data, we see instances where the performance measures are near 0.5 (or no better than random/majority class assignment).
 
 ```{r}
-results_tune <- collect_metrics(peng_tune) |> arrange(mean)
-
-head(results_tune)
 tail(results_tune)
+```
+
+The hyperparameters for these poor models make sense: very few hidden layers, virtually no penalty, and very few iterations. Let's see if we can't visualze the intersection of these results:
+
+```{r}
+ggplot(
+    results_tune, 
+    aes(hidden_units, penalty, color = .metric, size = mean)
+) +
+    geom_jitter(alpha = 0.6)
+```
+
+
+```{r}
+ggplot(
+    results_tune, 
+    aes(epochs, penalty, color = .metric, size = mean)
+) +
+    geom_jitter(alpha = 0.6)
 ```
 
 ```{r}
 ggplot(
-    results_tune |> 
-        pivot_longer(
-            c(hidden_units:epochs)
-        ), 
-    aes(value, mean)
+    results_tune, 
+    aes(epochs, hidden_units, color = .metric, size = mean)
 ) +
-    geom_line() + 
-    geom_point() +
-    facet_wrap(~name, nrow = 1, scales = "free")
+    geom_jitter(alpha = 0.6)
 ```
 
+These aren't perfect visuals but they do get to the main takeaway: there's no single, magic combination of hyperparameters. Any with moderate to high values across each will do just fine.
+
+If we take the averages of the top models, we get the following:
 
 ```{r}
-peng_best <- peng_tune |> select_best(metric = "roc_auc")
-peng_best
+results_tune |>
+    filter(mean == max(mean)) |>
+    summarise(
+        hidden_units_avg = median(hidden_units), 
+        penalty_avg = mean(penalty), 
+        epochs_avg = median(epochs)
+    )
 ```
 
-Let's see if we get anything different with balanced data. We need a new recipe:
+This combination of hyperparameter values is probably just as good as any we found among the best models.
+
+
+### Balanced data set
+
+We can do the same thing with the balanced data. In theory, we should get similar to even better results. We need a new workflow using the same model but with the second recipe:
 
 ```{r}
 peng_wflw_02 <-
     workflow() |>
-    add_model(nn_mod02) |>
+    add_model(nn_mod01) |>
     add_recipe(preg_recipe_02)
 ```
+
+Now we tune the model's hyperparameters:
 
 ```{r}
 peng_tune_02 <-
@@ -448,31 +442,43 @@ peng_tune_02 <-
     tune_grid(
         resamples = peng_folds, 
         grid = peng_tune_grid, 
-        metrics = metric_set(roc_auc)
+        metrics = metric_set(roc_auc, f_meas)
     )
 ```
 
-The model will calculate *ROC/AUC* values which will help in determining the "best model" based on hyperparameters used.
-
-### Tuning Evaluation
+### Balanced tuning evaluation
 
 ```{r}
-results_tune <- collect_metrics(peng_tune) |> arrange(mean)
+results_tune02 <- collect_metrics(peng_tune_02) |> arrange(desc(mean))
 
-head(results_tune)
-tail(results_tune)
+head(results_tune02)
 ```
+
+As it turns out, a neural network model on the balanced data is resulting just as performant as the imbalanced data. This is some confirmation of the model's robustness.
+
+
+## Final prediction
+
+### Model confirmation
+
+Having thoroughly explored and tested models up to this point, let's confirm what we'd like to proceed with. 
 
 ```{r}
-doParallel::registerDoParallel(cores = 3)
+#peng_wflw <- update_model(peng_wflw, nn_mod01)
 
-bal_results <- fit_resamples(
-    peng_wflw_02, 
-    resamples = peng_folds, 
-    metrics = metric_set(roc_auc)
-)
+final_fit <- peng_wflw |> 
+    finalize_workflow(tibble(
+        hidden_units = 7, 
+        penalty = 1.0, 
+        epochs = 670
+    )) |> 
+    last_fit(split = split_obj)
 ```
 
+:::{#final-model-metrics}
 ```{r}
-collect_metrics(bal_results)
+final_fit |> collect_metrics() |> head(2)
 ```
+:::
+
+Our finalized model on the last fit indicates a very performant model. Near perfect classification of unknown species.
