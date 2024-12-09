@@ -20,7 +20,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach(es) | Links |
 | --- | --- | --- | --- | --- |
-| Home Credit Default Risk | Estimating likelihood of default | `R`, `Python` | Random Forest, SVM, Elastic Net, PCA | [Notebooks](), [Code]() |
+| Home Credit Default Risk | Estimating likelihood of default | `R`, `Python` | Random Forest, SVM, Elastic Net, PCA | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/home-credit-default-risk/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/home-credit-default-risk) |
 | NBA Player Position Roles | Classifing NBA prospects to new positions/roles | `R` | KMeans, PCA, XGBoost | - |
 
 ### 📈 Regression
@@ -29,11 +29,11 @@ Each project in this portfolio leverages a unique modeling approach and showcase
  
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-| Sacramento Housing | Predicting house prices for value | `R` | Penalized Regression | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/sacramento-housing/R/model.r.qmd) |
-| Food Delivery Times | Predicting time from order to delivery for restaurant | `R` | Boosted Trees | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/food-delivery-times/R/model.r.qmd) |
-| Hotel Rates | Predicting average nightly hotel rates | `R` | Support Vector Regression | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/hotel-rates/R/model.r.qmd) |
-| Car Prices | Predicting car prices | `R`, `Python`, `Julia` | Linear Regression | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/tree/master/regression/car-prices) |
-| Laptop Prices | Predicting laptop pricing | `R` | Decision Tree | [Notebooks](), [Code]() |
+| Sacramento Housing | Predicting house prices for value | `R` | Penalized Regression | [Notebooks](https://adambushman.github.io/data-science-projects/regression/sacramento-housing/R/a01_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/sacramento-housing/R/model.r.qmd) |
+| Food Delivery Times | Predicting time from order to delivery for restaurant | `R` | Boosted Trees | [Notebooks](https://adambushman.github.io/data-science-projects/regression/food-delivery-times/R/a05_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/food-delivery-times/R/model.r.qmd) |
+| Hotel Rates | Predicting average nightly hotel rates | `R` | Support Vector Regression | [Notebooks](https://adambushman.github.io/data-science-projects/regression/hotel-rates/R/a03_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/hotel-rates/R/model.r.qmd) |
+| Car Prices | Predicting car prices | `R`, `Python`, `Julia` | Linear Regression | [Code](https://github.com/adambushman/data-science-projects/tree/master/regression/car-prices) |
+| Laptop Prices | Predicting laptop pricing | `R` | Decision Tree | [Code]() |
 
 
 ### 🎨 Classification
@@ -42,7 +42,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-| Palmer Penguins | Classifying penguin species | `R` | Neural Network | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/classification/palmer-penguins/R/model.r.qmd) |
+| Palmer Penguins | Classifying penguin species | `R` | Neural Network | [Notebooks](https://adambushman.github.io/data-science-projects/classification/palmer-penguins/R/a08_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/classification/palmer-penguins/R/model.r.qmd) |
 | Zoo Animal Classes | Predicting classes of zoo animals | `R` | Decision Tree | [Code](https://github.com/adambushman/data-science-projects/blob/master/classification/zoo-animal-classes/R/model.r.qmd) |
 | Employee Attrition | Classifying employees to leave and stay at the company | `R` | Decision Tree | - |
 | Breast Cancer | Predicting existance of breast cancer among patients | `Python` | Decision Tree | - |
@@ -65,7 +65,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-| Medicare Perscriptions | Predicting volumes of medicare perscriptions | `R` | ARIMA | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/time-series/medicare-perscription-volumes/R/model.r.qmd) |
+| Medicare Perscriptions | Predicting volumes of medicare perscriptions | `R` | ARIMA | [Notebooks](https://adambushman.github.io/data-science-projects/time-series/medicare-perscription-volumes/R/a02_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/time-series/medicare-perscription-volumes/R/model.r.qmd) |
 
 
 ### 📕 Natural Language Processing (NLP)
@@ -83,7 +83,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-| Alzheimer's Disease | Reducing dimensionality of alzheimer's predictors | `R` | PCA | [Notebooks](), [Code](https://github.com/adambushman/data-science-projects/blob/master/other-methods/dimensionality-reduction/alzheimers-disease/R/model.r.qmd) |
+| Alzheimer's Disease | Reducing dimensionality of alzheimer's predictors | `R` | PCA | [Notebooks](https://adambushman.github.io/data-science-projects/other-methods/dimensionality-reduction/alzheimers-disease/R/a0607_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/other-methods/dimensionality-reduction/alzheimers-disease/R/model.r.qmd) |
 
 
 ## Common Resources
