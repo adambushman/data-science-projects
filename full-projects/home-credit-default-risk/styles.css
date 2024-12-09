@@ -1,0 +1,5 @@
+.scrolling-y .cell-output {
+    max-height: 600px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}

@@ -1,0 +1,505 @@
+---
+title: "Boosted Trees | Food Delivery Times"
+description: "Leveraging boosted trees (XGBoost) in R to predict restaurant delivery times."
+author: "Adam Bushman"
+date: "11/5/2024"
+format: 
+    html:
+        toc: true
+        theme: simplex
+        smooth-scroll: true
+        embed-resources: true
+execute:
+    warning: false
+    error: false
+---
+
+
+# Assignment Questions
+
+## Name
+>   What is your name? Include all team members if submitting as a group.
+
+Adam Bushman [u6049169]; no group members.
+
+
+## Perspective
+>   From what perspective ar eyou conducting the analysis? (Who are you? / Who are you working for?)
+
+I am a former data professional chasing a dream of owning a restaurant. While menu curation and delighting customers with my cuisine is a passion, the experience in my former career continually prompts me to measure activities in the restaurant and analyze them for decision making. What's most got me curious of late is the delivery program.
+
+Much of the value a restaurant proposes to customers is the experience of being waited on, dining with friends or family, and enjoying a beautifully presented and exquisitely tasting dish. 
+
+The proposition changes in dramatic fashion with take-out. Now a rewarding experience is first and foremost a quick delivery. Managing expectations is the name of the game in delivery. Even 5 minutes of underestimation could result in a negative review. 
+
+## Question
+>   What is your question?
+
+Can a predictive model be generated to 1) accurately predict time from order to delivery and 2) shed light on situations not-suitable for delivery? This would be valuable information as we work to make the delivery program as successful as our dine-in experience.
+
+## Data set
+>   Describe your dataset(s) including URL (if available)
+
+The data set is sourced from Posit via their [{modeldata}](hhttps://modeldata.tidymodels.org/reference/deliveries.html) package. The dataset itself is named *Food Delivery Time Data*. There is no mention of the original source of the data nor is their any mention of it being synthetically generated.
+
+## Predictor(s) and target(s)
+>   What is (are) your independent variable(s) and dependent variable(s)? Include variable type (binary, categorical, numeric).
+
+The dataset is nicely aligned with my needs as a restauranteer looking to optimize the delivery program. The dependent (target) variable in this dataset is `time_to_delivery`, defined as the time from initial order to receiving the food.
+
+Independent (predictor) variables come in two flavors (pardon the pun):
+
+1.   The dataset contains three (3) context-related variables: `hour` (of the day order was received), `day` (of the week order was received), and `distance`, the approximate number of miles between restaurant and delivery location.
+2.   Lastly, there exist 27 `item_` variables that measure the quantity of the corresponding menu item included in the order.
+
+There are just of 10,000 rows in the data. Additional information (including data types) can be found by referencing the [data dictionary](#data-dictionary).
+
+
+## Model resonability
+>   How are your variables suitable for your analysis method?
+
+The variables are suitable for a boosted trees approach given none have obvious, direct relationships with `time_to_delivery`. We can see in the [EDA portion](#relationship-exploration) that many of the features possessed complex relationships that would be tough to extract with OLS family of models.
+
+Boosted trees are also ideal given we have a fair volume of predictors (30) and given our target variable isn't linear or normally distributed.
+
+## Conclusions
+>   What are your conclusions (include references to one or two CLEARLY INDICATED AND IMPORTANT graphs or tables in your output)?
+
+I leveraged a boosted trees regression model using XGBoost in the `{tidymodels}` framework. I dynamically tuned 4 hyperparameters (`mtry`, `trees`, `tree_depth`, and `learning_rate`).
+
+The best model produced [some excellent performance metrics](#final-model-metrics): $R^2=0.902$ and $RMSE=0.2$. These are great indications of a robust model for predicting `time_to_delivery`.
+
+Another important motivation was to identify areas of operations for which to focus. We isolated the [important features](#important-features) of the model. 
+
+While boosted trees are an opaque model that won't give us detailed relationship estimates, we were able to say that the `hour` and weekend `day` were the two areas to stress operational efficiency for controling delivery times.
+
+## Assumptions
+>   What are your assumptions and limitations? Did you include any robustness checks?
+
+We made the assumption that this problem was an ideal one for boosted trees. As a restauranteer, achieving a high performing model was of interest. Given the non-parametric nature of the data, found in [exploratory data analysis](#relationship-exploration), this aligns well.
+
+However, my interest in explaining relationships between predictors and target is not well addressed by an opaque model like boosted trees. We did look into [important features](#important-features) of the model and gained some simple insights, but weren't able to describe the complex interplay.
+
+We did ensure high data quality and pushed hard to ensure no-overfitting with the extensive hyperparameter tuning and cross-validation.
+
+# Assignment Workflow
+ 
+## Analysis Prep
+
+### Loading packages
+
+```{r}
+library('tidyverse')        # Wrapper for many convenient libraries
+library('modeldata')        # Contains data for the assignment
+library('skimr')            # Quickly summarise data
+library('gt')               # Render "great tables"
+
+library('xgboost')          # Package for leveraging boosted trees
+library('tidymodels')       # Wrapper for convenient modeling framework
+library('vip')              # Generating important feature plots
+```
+
+### Loading the data
+
+We'll start off by referencing the "Food Delivery Times" data for the assignment that we're sourcing from the `{modeldata}` package.
+
+```{r}
+delivery_raw <- modeldata::deliveries       # Data for the assignment
+```
+
+With it loaded into the session, let's get a sense for what we're working with.
+
+### Data set inspection
+
+Right away, I like to get acquainted with the data set. That means understanding what each column seeks to describe, confirming the granularity of the rows, and getting my arms around structure, completeness, distribution, etc.
+
+The following data dictionary was included in the description of the dataset:
+
+```{r}
+#| include: false
+
+dict_list <- list(
+    list(variable = "time_to_delivery", datatype = "<numeric>", description = "Time from the initial order to receiving the food in minutes"), 
+    list(variable = "hour", datatype = "<numeric>", description = "The time, in decimal hours, of the order"), 
+    list(variable = "day", datatype = "<factor>", description = "The day of the week for the order"),  
+    list(variable = "distance", datatype = "<numeric>", description = "The approximate distance in miles between the restaurant and the delivery location."),  
+    list(variable = "item_##", datatype = "<integer>", description = "A set of 27 predictors that count the number of distinct menu items in the order") 
+)
+
+delivery_dict <- do.call(rbind, lapply(dict_list, as.data.frame))
+```
+
+::: {#data-dictionary}
+```{r}
+#| html-table-processing: none
+
+gt(delivery_dict) %>%                                   # Create a "great tables" (gt) object
+    cols_label(                                         # Rename some columns
+        variable = "Variable Name", 
+        datatype = "Data Type", 
+        description = "Variable Description"
+    ) %>%
+    tab_options(
+        column_labels.background.color = "#d9230f",     # Apply red header background
+        column_labels.font.weight = "bold",             # Bold headers
+        row.striping.background = '#FFFFFF'             # Remove row striping
+    )
+
+```
+:::
+
+Using the `{skimr}` package, we can get a comprehensive summary of the data.
+
+```{r}
+skim(delivery_raw)
+```
+<br>
+
+Initial observations include:
+
+*   We have a wealth of data
+    *   Over 10,000 rows and 31 columns
+*   All the data are complete
+    *   No missing values in any of the columns
+*   All variables look to be of the right data type
+*   As to be expected, the order counts have some skewness to them
+    *   Most of the time, an item is not ordered (i.e. `0`); highest order counts of an item are `3` or `4`
+    *   Time to delivery and distance are also skewed left
+    *   Since we are using a trees based approach, we shouldn't need to worry about approximating a normal distribution
+
+## Simple Exploratory Data Analysis
+
+Let's do some additional exploration of the data.
+
+We saw that time to delivery ranged from ~12 mins to ~61. You'd have to imagine some items take longer to prepare than others. Let's generate a quick table to evaluate just that.
+
+:::{#relationship-exploration}
+```{r}
+delivery_raw |>
+    pivot_longer(
+        cols = tidyr::starts_with("item"), 
+        names_to = "item", 
+        values_to = "quantity"
+    ) |>
+    filter(quantity != 0) |>
+    group_by(item) |>
+    summarise(stats = list(summary(time_to_delivery))) |>
+    tidyr::unnest_wider(stats) |>
+    mutate(Range = Max. - Min.) |>
+    arrange(desc(Range)) |>
+    gt() |>
+    cols_label(                                                         # Rename some columns
+        item = "Menu Item", 
+        `1st Qu.` = "1st Quartile", 
+        `3rd Qu.` = "3rd Quartile"
+    ) %>%
+    tab_options(
+        column_labels.background.color = "#d9230f",                     # Apply red header background
+        column_labels.font.weight = "bold",                             # Bold headers
+        row.striping.background = '#FFFFFF'                             # Remove row striping
+    )
+```
+:::
+
+This table gives us some great info. Most menu items, in a *best case* scenario, take about the same amount of time to delivery (all of the min and 1st quartile values are about the same). There are no drastic *worst case* scenario as the longest delivery times are all about the same. There are a handful of menu items, most notable `item_19`, `item21`, `item_16`, and `item_05` that have notably more narrow range of delivery times. These menu items are far less sensitive.
+
+Another thing we can do is look at the total quantity of an order compared to delivery time. This we can do in pretty short order:
+
+```{r}
+delivery_raw |>
+    mutate(total_qty = rowSums(across(item_01:item_27))) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#BE0000') + 
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot"
+    )
+```
+
+If you squint hard, *maybe* you can see a relationship. Ultimately, it's confounded by distance. We could try the same thing but "bin" certain delivery ranges. Let's give that a go:
+
+```{r}
+delivery_raw |>
+    mutate(
+        total_qty = rowSums(across(item_01:item_27)), 
+        distance_bin = cut(distance, 6)
+    ) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#707271') + 
+    facet_wrap(~distance_bin, ncol = 2) +
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot", 
+        panel.background = element_rect(color = "#707271"), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+Interesting. It doesn't appear the total order quantity has a strong relationship to delivery time, even when controling for distance. Let's do this same thing but for day of the week:
+
+```{r}
+delivery_raw |>
+    mutate(
+        total_qty = rowSums(across(item_01:item_27))
+    ) |>
+    
+    ggplot(aes(total_qty, time_to_delivery)) +
+    geom_jitter(color = '#707271') + 
+    facet_wrap(~day, nrow = 2) +
+    labs(
+        title = "Relationship between order quantity and delivery time", 
+        x = "Total Quantity", 
+        y = "Delivery Time"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot", 
+        panel.background = element_rect(color = "#707271"), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+```
+
+Very interesting. It seemse that the range of delivery time is day dependent but even controlling for that confounder, we aren't seeing any hint of a relationship between order quantity and delivery time. As a restauranteer, this is somewhat curious since larger orders *feel like* they are more intensive to cook and package. 
+
+### Conclusion
+
+We're so far not picking up on any potential relationships. This is shaping up as an ideal problem for a boosted tree.
+
+## Preprocessing
+
+### Data cleaning / Feature Engineering
+
+As we've seen, there isn't really any cleaning or feature engineering to do on the dataset. Tree-based algorithms don't necessitate transformations for normal distributions or linear/polynomial relationships.
+
+Previous to the EDA work, it was hypothesized that creating a `total_qty` feature would be valuable. Based on our previous results, that seems to be an insignificant feature. We won't worry about that for now and just proceed to the next step.
+
+We will need to convert the `day` variable from factor to dummy/one-hot-encoded variables. However, we'll save that for the "recipe" step since `{tidymodels}` offers some real handy approaches to this.
+
+
+## Model resources
+
+### Splitting for training/testing sets
+
+As is customary, we must split our data into training and testing sets. We'll put aside the testing set and work with training until we're comfortable with our model definition. The `{rsample}` package has a lot of helpful functions for this workflow. In just a couple lines we get training and testing sets.
+
+```{r}
+set.seed(814)                                                               # Set reproducible seed
+split_obj <- initial_split(delivery_raw, prop = 0.75)                        # Split object
+
+delivery_train <- training(split_obj)                                          # Split for training
+delivery_test <- testing(split_obj)                                            # Split for testing
+```
+
+### Recipe
+
+We're going to practice using the `{tidymodels}` framework for this modeling exercise. There's a lot of neat features we can make use of, first of which is a "recipe". As a restauranteer, this always made sense to me. Just like a dish will call for ingredients and assembly steps, so does a modeling recipe.
+
+```{r}
+delivery_rec <- recipe(time_to_delivery ~ ., delivery_train) |>
+    step_dummy(day)
+```
+
+The recipe now knows what our modeling formula is and is prepped for use of the training data. Next, we'll set up some cross validation.
+
+
+### Cross validation tuning
+
+Cross validation is important to ensure the results of a single model isn't an outlier. We'd hate to get a singular amazing result by chance that didn't align with the true range of performance.
+
+Another important reason for cross validation, in particular for a boosted tree model, is choosing hyperparameters. While running models on each fold of the data, we'll simultaneously be searching for ideal hyperparameters that give the best performance. Hyperparameters such as:
+
+*   Number of trees
+*   The depth of trees
+*   The learning rate
+*   Etc.
+
+Let's first create our cross validation folds. We set `v = 5` because we want 5 folds:
+
+```{r}
+delivery_folds <- rsample::vfold_cv(delivery_train, v = 5)
+```
+
+### Model details
+
+Now we'll start defining the model and the hyperparameters to tune.
+
+```{r}
+delivery_modl <- boost_tree(
+    trees = tune(), 
+    tree_depth = tune(), 
+    learn_rate = tune(), 
+    mtry = tune()
+) |>
+    set_engine("xgboost", verbosity = 0) |>
+    set_mode("regression")
+```
+
+Next we'll setup the tuning.
+
+### Hyperparameter tuning
+
+We'll set up a grid that keeps track of the unique combinations for these hyperparameters. As we run a model on the cross-validation folds, we'll use those combinations in the model. The resulting performance of the model we'll be saved. At the end, we'll get a sense for the combination giving the best results.
+
+```{r}
+delivery_tune_grid <- grid_regular(
+    trees(), 
+    tree_depth(), 
+    learn_rate(), 
+    mtry(c(1, ceiling(sqrt(30)))), 
+    levels = 4
+)
+
+head(delivery_tune_grid)
+tail(delivery_tune_grid)
+```
+
+## Model training
+
+### Workflow configuration
+
+We next define a workflow that will take all these pieces and run them cohesively. We have a 1) recipe, 2) cross validation folds, 3) model, and 4) a hyperparameter tuning grid. Let's integrate them.
+
+```{r}
+delivery_wflw <-
+    workflow() |>
+    add_model(delivery_modl) |>
+    add_recipe(delivery_rec)
+```
+
+Next, we'll tune the model like so (we'll setup parallel processing to make the tuning process go quicker):
+
+```{r}
+doParallel::registerDoParallel(cores = 10)
+
+set.seed(2015)
+delivery_tune <-
+    delivery_wflw |>
+    tune_grid(
+        resamples = delivery_folds, 
+        grid = delivery_tune_grid, 
+        metrics = metric_set(rmse)
+    )
+```
+
+The model will calculate *Root Mean Squared Error* ($RMSE$) which will be used to determining the "best model" based on hyperparameters used.
+
+### Tuning Evaluation
+
+
+
+```{r}
+results_tune <- collect_metrics(delivery_tune) |> arrange(mean)
+
+head(results_tune)
+tail(results_tune)
+```
+
+We see the best models have an $RMSE$ of approximately `2` while the worst models are in the `26` range. We can create a visualization that puts this all together:
+
+:::{#tuning-results}
+```{r}
+ggplot(
+    results_tune |> pivot_longer(
+        c(mtry, trees, tree_depth, learn_rate)
+    ) |> mutate(mean_bin = cut(mean, 10)), 
+    aes(x = value, y = mean, color = mean_bin)
+) +
+    geom_jitter(size = 5, alpha = 0.25) +
+    facet_wrap(~name, scales = "free") +
+    labs(
+        title = "Boosted trees hyperparameter values", 
+        x = "Hyperparameter Value", 
+        y = "RMSE", 
+        color = "RMSE Group"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot", 
+        panel.background = element_rect(color = "#707271"), 
+        strip.background = element_rect(fill = "#BE0000"), 
+        strip.text = element_text(color = "white", face = "bold"), 
+        legend.position = "top", 
+        legend.justification.left = "top"
+    )
+```
+:::
+
+Each box corresponds to a hyperparameter. The x-axis tracks the hyperparameter value while the y-axis tracks $RMSE$. 
+
+We'll proceed to use the best model: $mtry = 6$, $trees = 1,333$, $treeDepth = 5$, and $learningRate = 0.1$.
+
+
+## Final model
+
+### Define final model
+
+We can pull the final model by selecting the "best" based on RMSE:
+
+```{r}
+best_modl <- delivery_tune |> select_best(metric = "rmse")
+```
+
+With that, we finalize our workflow:
+
+```{r}
+final_wflw <- delivery_wflw |> finalize_workflow(best_modl)
+```
+
+
+### Predict on testing
+
+Let's proceed to predict values using the tuned model from above but on the testing data set.
+
+```{r}
+final_fit <- final_wflw |> last_fit(split = split_obj)
+```
+
+We can now capture performance measures from the final fit:
+
+:::{#final-model-metrics}
+```{r}
+final_fit |> collect_metrics()
+```
+:::
+
+We're capturing an $R^2$ of `0.902`, meaning our model is explaining 90% of the variance on test data. This is shaping up to be a strong predictive model for `time_to_delivery`. 
+
+Let's move on to seeing what features are most important to predicting `time_to_delivery`. 
+
+## Results
+
+We already know that there's complex relationships and given boosted trees are a pretty opaque model, we won't be able to zero in on these relationships in a powerful way.
+
+However, we can generate a plot for important features that could be helpful in my quest to learn about operations of the restaurant that would setup the delivery program for success.
+
+:::{#important-features}
+```{r}
+final_wflw |>
+    fit(data = delivery_train) |>
+    extract_fit_parsnip() |>
+    vip(geom = "col", aesthetics = list(fill = "#BE0000")) +
+    labs(
+        title = "Important Features of Boosted Trees"
+    ) +
+    theme_minimal() +
+    theme(
+        plot.title.position = "plot"
+    )
+```
+:::
+
+It's clear from this plot that I should focus on operations depending on hour of the day and weekends.

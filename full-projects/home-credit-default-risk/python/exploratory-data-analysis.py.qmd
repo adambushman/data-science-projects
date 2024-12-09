@@ -1,0 +1,1088 @@
+---
+title: "Home Credit Default Risk"
+subtitle: "Part 1 | Exploratory Data Analysis | IS 6812"
+author: "Adam Bushman (u6049169)"
+date: "9/10/2024"
+format: 
+    html:
+        css: styles.css
+        theme: simplex
+        toc: true
+        embed-resources: true
+editor:
+    render-on-save: true
+---
+
+# Introduction
+
+## The Project
+
+#### Business Problem
+
+Home Credit cares deeply about the population without sufficient credit history and aims to improve inclusion for this underrepresented group by designing prediction models for loan repayment, such that capable borrowers are not denied solely due to absence of credit while protecting against defaults.
+
+#### Benefit of a Solution
+
+A more accurate prediction model will help Home Credit a) provide lending terms and b) sufficiently balance risk such that financial inclusion is expanded.
+
+#### Success Metrics
+
+The success of the project will be measured in accurately predicting loan defaults, so that an increase in loan approval rates among this underrepresented group is accompanied by a stable or even reduction in default rates.
+
+#### Analytics Approach
+
+A supervised machine learning classification approach will be used to predict loan default risk, leveraging alternative data sources such as telco and transactional information, with the target variable being loan repayment.
+
+#### Scope
+
+The project will deliver a predictive model for assessing loan repayment abilities.
+
+#### Details
+
+The project will be executed by a team of business analysts, equipped with data processing and modeling skills. The project will feature iterative milestones for data exploration, model development, and evaluation, culminating in a final model by calendar year end.
+
+
+## My Approach
+
+For this exploratory data analysis, I plan to use the following languages, APIs, and tools:
+
+*   [Quarto](https://quarto.org/): probably "the" notebook of choice for the scientific community; built and maintained by Posit, it's flexible, powerful, and beautiful.
+*   [Python](https://www.python.org/): I usually default to R for analytical tasks so I could use the extra practice in Python.
+*   [DuckDB](https://duckdb.org/): an in-process analytical database engine. It is extremely fast and features a convenient syntax. It's gathered tremendous steam in the industry, even for analysis tasks.
+
+::: {layout="[[3,4,4,5]]" layout-valign="center"}
+![](https://quarto-dev.github.io/quarto-r/logo.png)
+
+![](https://quantumzeitgeist.com/wp-content/uploads/pythoned.png)
+
+![](https://duckdb.org/images/logo-dl/DuckDB_Logo.png)
+::::
+
+Within the Python ecosystem I'll use several libraries that will augment the analytical process. These include, but are not limited to:
+
+*   [pandas](https://pandas.pydata.org/docs/index.html): probably *the* foundational package for data analysis in Python
+*   [scikit-learn](https://scikit-learn.org/stable/): a comprehensive API for data science models and workflows
+*   [statsmodels](https://www.statsmodels.org/stable/index.html): one of the best statistics libraries in Python
+*   [plotnine](https://plotnine.org/): the {ggplot2} equivalent in Python, bringing "grammar of graphics"
+*   [skimpy](https://pypi.org/project/skimpy/): a neat package that started in R designed to summarize tabular data in a digestible way
+
+
+::: {layout="[[8,14,5,5]]" layout-valign="center"}
+![](https://numfocus.org/wp-content/uploads/2016/07/pandas-logo-300.png)
+
+![](https://miro.medium.com/v2/resize:fit:984/1*OTt5dpD5N4Ru1qn0WNsZ4g.png)
+
+![](https://plotnine.org/images/logo-540.png)
+
+![](https://docs.ropensci.org/skimr/logo.png)
+::::
+
+# Analysis Preparation
+
+## Data Source
+
+The data is sourced from [Kaggle](https://www.kaggle.com/competitions/home-credit-default-risk/overview) where [Home Credit](https://www.homecredit.net/) hosted a competitiion back in the summer of 2018. Data was downloaded therefrom on August 20th, 2024 and used concurrently throughout the Capstone course at University of Utah, Fall 2024.
+
+
+## Loading Data
+
+We'll start off importing `duckdb`. We'll do much of the data processing work using this powerful SQL engine.
+
+```{python}
+
+import duckdb
+
+```
+
+With access to the API, we can begin to query our data located in files. We need only setup "relations" (informing `duckdb` where the files are located).
+
+```{python .duck-db-relations}
+#| output: false
+
+# DuckDB relations
+# These are tables against which we can query using the DuckDB API
+
+duckdb.read_csv("../data/application_test.csv")
+duckdb.read_csv("../data/application_train.csv")
+duckdb.read_csv("../data/bureau_balance.csv")
+duckdb.read_csv("../data/bureau.csv")
+duckdb.read_csv("../data/credit_card_balance.csv")
+duckdb.read_csv("../data/installments_payments.csv")
+duckdb.read_csv("../data/POS_CASH_balance.csv")
+duckdb.read_csv("../data/previous_application.csv")
+
+```
+
+This approach isn't what you'd call "conventional". However, DuckDB is uniquely suited for this type of workload. We have multiple files with millions of records each. DuckDb is more performant over [other Python ecosystem libraries](https://github.com/prrao87/duckdb-study) and [packages in the R ecosystem](https://adrian-cidre.com/posts/012_benchmarking/).
+
+Okay, so it's well suited to the problem, but how are we expecting to work with these data? We'll walk through some use cases quickly to demonstrate how seamless it will actually be.
+
+
+## Working With the Data
+
+Straight away, we can interact with these files with plain SQL. For example, with a simple query (below) we can look at the first 10 rows of the `bureau.csv` file.
+
+```{python}
+
+duckdb.sql("SELECT * FROM '../data/bureau.csv' LIMIT 10").show()
+
+```
+
+DuckDB does a nice job styling the output and including helpful details, such as data types.
+
+But don't think we're "stuck" in the world of SQL for the duration of this analysis; far from it. DuckDB is very adept at refactoring the data for use with the other packages we'll be using. Let's bring in `pandas` and see how this works:
+
+```{python}
+
+import pandas as pd
+
+```
+
+```{python}
+
+df = duckdb.sql("SELECT * FROM '../data/bureau.csv' LIMIT 10").fetchdf()
+
+type(df)
+
+```
+
+As you can see, we now have a `pandas` data frame. We could run a model with `scikit-learn`, generate a visualization with `plotnine`, or perform complex, custom logic ill-fit for SQL. For now, we'll just select every other column:
+
+```{python}
+
+df_sub = df.loc[:,::2]
+
+df_sub.info()
+
+```
+
+At this point, we may be ready to leverage the speed and efficiency of DuckDB. So we can just switch right back!
+
+```{python}
+
+duckdb.sql("SELECT * FROM df_sub").show()
+
+```
+
+There really won't be any issue navigating between the different APIs. In fact, we'll be able to leverage the unique strengths of each of them to best advance our analysis. 
+
+
+# Exploration
+
+## Skim each dataset
+
+We'll start off by getting familiar with each of the data sets. We'll use the `{skimpy}` package for this and do some visualizations. We'll rely on the ERD to help with interpretation:
+
+![](https://storage.googleapis.com/kaggle-media/competitions/home-credit/home_credit.png)
+
+### `application_train.csv`
+
+>   Main tables - out train and test samples; target (binary); info about loan and loan applicant at application time.
+
+This file is the same as `application_test.csv` except that it features the target variable.
+
+```{python}
+#| class: scrolling-y
+
+from skimpy import skim
+
+app_train_df = (
+    duckdb                                                 # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/application_train.csv'")     # Read the file
+    .fetchdf()                                             # Convert to a pandas dataframe
+)
+
+skim(app_train_df)                                         # "Skim" the data set
+
+```
+
+This is a LARGE data set. Let's break down some of the observations we can glean from the summary:
+
+#### Data Types
+
+*   There's several variables casted as numeric that should be categorical
+    *   Any variables with `FLAG_` prefixes: ~32 columns
+        *   Examples: `FLAG_MOBIL`, `FLAG_DOCUMENT_#`, ...
+    *   Other variables treated as flags but not specified in the name: ~6 columns
+        *   Examples: `REG_REGION_NOT_LIVE_REGION`, `LIVE_CITY_NOT_WORK_CITY`, ...
+    *   `REGION_RATING_` variables that are ordinal classificaitons
+*   Many variables of type `string` could be candidates for categorical depending on count of unique values
+    *   Examples: `NAME_CONTRACT_TYPE`, `ORGANIZATION_TYPE`
+*   Some variables casted as `string` but may need to be numeric
+    *   Any with `_MODE` suffix
+
+#### Missing Data
+
+*   `EXT_SOURCE_#` these are scores ingested from third parties
+    *   Understandably sparse; not every client would be represented in third-party systems
+*   Fields including `APARTMENT_`, `BASEMENT_`, `ELEVATOR_`, etc., all relate to the client's current dwelling.
+    *   43 of the file's 122 columns relate to the client's dwelling
+    *   These are very sparse, about ~50% complete. These fields represent most of the missing data
+    *   Presumably, the lender was unable to collect such detail for every client
+*   `OBS_##_SOCIAL_CIRCLE` and `DEF_##_SOCIAL_CIRCLE` relate to default rates on observation ## days past due
+    *   This is a count that's heavily skewed to the right
+    *   <1% of observations have these fields as missing
+*   `AMT_REQ_CREDIT_BUREAU_XX` are fields measure the number of credit inqueries in XX timeframe
+    *   These data set is geared around users without sufficient credit history so makes sense this is missing
+    *   ~13% of the data is missing
+*   `OCCUPATION_TYPE` refers to the type of job the user has
+    *   Missing for virtually 1/3 clients
+    *   `ORGANIZATION_TYPE`, however, is not missing so we do retain some attribute relative to their work
+    *   Perhaps in combination with `NAME_EDUCATION_TYPE` there's predictive power
+
+#### Distribution
+
+*   All dwelling related variables have been *normalized* based on description column descriptions file
+    *   Checking the histograms to the far right, this appears to be accurate
+*   There's a couple variables with skewed distributions
+    *   `DAYS_REGISTRATION`: skewed right
+    *   `DAYS_LAST_PHONE_CHANGE`: skewed right
+
+#### Potential feature engineering
+
+*   Dimensionality reduction
+    *   `FLAG_DOCUMENT_#` fields could potentially be summarized a few ways;
+        *   % of documents completed
+        *   Finding principal components
+        *   Maybe only certain documents matter
+    *   There's many measures of central tendency for dwelling (avg, mode, median)
+        *   Likely not all for each perspective is needed
+
+### `bureau.csv`
+
+>   Application data from previous loans that client got from other institutions that were reported to the Credit Bureau. One row per client's loan in Credit Bureau
+
+This file will tell us all about the previous loans any credit history client would have. Let's digest the data:
+
+```{python}
+#| class: scrolling-y
+
+bureau_df = (
+    duckdb                                      # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/bureau.csv'")     # Read the file
+    .fetchdf()                                  # Convert to a pandas dataframe
+)
+
+skim(bureau_df)                                 # "Skim" the data set
+
+```
+
+The first thing to notice is the ~1.7M records, compared to the previous file of ~360K. Cearly there will be multiple historical bureau records for each matching application.
+
+#### Data Types
+
+*   All seems to be in fair order
+*   There's opportunity with the 3 `string` variables to cast as a `categorical`
+
+#### Missing Data
+
+*   5 columns are missing data
+    *  `DAYS_CREDIT_ENDDATE` and `DAYS_ENDDATE_FACT` measure days between current application and end date of bureau credit; the end date must just be missing
+    *   `AMT_CREDIT_MAX_OVERDUE` is curiously missing a lot of data; perhaps due to there not having been an overdue balance to report
+    *   `AMT_CREDIT_SUM_DEBT` is understandable if someone had no current debt sums
+    *   `AMT_CREDIT_SUM_LIMIT` is understandably blank should a client not have a credit card
+    *   `AMT_ANNUITY` only those with an annuity loan would have values here
+
+Many of those seem resonable to populate with zeros in a cleaning phase.
+
+
+#### Distribution
+
+*   `DAYS_CREDIT` seem to be the only significantly skewed variable
+
+
+#### Potential feature engineering
+
+*   I'd be curious just how much variability in credit reports per individual could be explained by dimensionality reduction (PCA)
+
+
+### `bureau_balance.csv`
+
+>   Monthly balance of credits in Credit Bureau
+
+Essentially, we have an expanded version of balances per client loan reported to the bureau.
+
+```{python}
+#| class: scrolling-y
+
+bureau_bal_df = (
+    duckdb                                              # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/bureau_balance.csv'")     # Read the file
+    .fetchdf()                                          # Convert to a pandas dataframe
+)
+
+skim(bureau_bal_df)                                     # "Skim" the data set
+
+```
+
+The first thing I'm seeing is ~27.2M records. Multiple monthly balances per loan.
+
+#### Data Types
+
+*   All seems to be in fair order
+*   There's opportunity the `status` variable to cast as a `categorical`
+
+#### Missing Data
+
+No missing data
+
+
+#### Distribution
+
+*   `MONTHS_BLANCE` seems to be skewed to the right
+
+
+#### Potential feature engineering
+
+*   It's possible this dataset can be represented in 2 variables:
+    *   Existence of previous loan: boolean
+    *   Median oustanding balance: numeric
+
+
+
+### `previous_application.csv`
+
+>   Application data of client's previous loans in Home Credit. Info about the previous loan parameters and client info at time of previous application. One row per previous application.
+
+This file details previous applications with Home Credit. Some clients may have never applied for loans previously while others could have had multiple applications.
+
+```{python}
+#| class: scrolling-y
+
+prev_app_df = (
+    duckdb                                                      # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/previous_application.csv'")       # Read the file
+    .fetchdf()                                                  # Convert to a pandas dataframe
+)
+
+skim(prev_app_df)                                               # "Skim" the data set
+
+```
+
+This file has ~1.0M records. Understandably, there's more records than applications due to monthly summaries and some customers having multiple previous loans.
+
+#### Data Types
+
+*   A few variables are mapped as continuous but need to be moved to discrete (possibly categorical)
+    *   `SELLERPLACE_AREA`, `NFLAG_INSURED_ON_APPROVAL`, `NFLAG_MICRO_CASH`, `NFLAG_LAST_APPL_IN_DAY`, `FLAG_LAST_APPL_PER_CONTRACT`
+*   A few variables mapped as `string` may be better suited as categorical
+    *   `NAME_CONTRACT_TYPE`, `NAME_CONTRACT_STATUS`, `NAME_PAYMENT_TYPE`, `NAME_CLIENT_TYPE`, `NAME_GOODS_CATEGORY`, etc.
+
+#### Missing Data
+
+*   There are several missing data points
+    *   `AMT_ANNUITY` refers to the previous application; if there was none or its balance is zero, makes sense to be missing
+    *   `AMT_DOWN_PAYMENT` would be zero if there was none made
+    *   `RATE_DOWN_PAYMENT` how much was put down relative to the loan (see above)
+    *   `RATE_INTEREST_PRIMARY` & `RATE_INTEREST_PRIVILEGED`; since this is applicationss, it could be there was previous credit
+        *   A high rate of missing data (99%)
+    *   `CNT_PAYMENT` how far into a previous loan for the current one
+    *   `DAYS_FIRST_*` refers to the first dispersement, due amount, etc; if no loan was approved, makes sense to be blank
+    *   `NAME_TYPE_SUITE` is the only discrete field with high NAs (49%); it indicates who accompanied the client in for the application
+
+
+#### Distribution
+
+*   Only two right-skewed data points I can see
+    *   `DAYS_DECISION` and `RATE_INTEREST_PRIVILEGED` (virtually no data on this one)
+
+
+#### Potential feature engineering
+
+*  Ultimately this will need to be aggregated; ways to represent the data?
+    *   Count of previous applications
+    *   Status/reject rates
+    *   Classify goods, maybe (% reasonable)
+
+
+
+### `installments_payments.csv`
+
+>   Past payment data for each installments of previous credits in Home Credit related to loans in our sample.
+
+These data will link to the current application and to past applications. Some clients will have previous loans, even multiple, while others may have none. We can see payments due and made in this file.
+
+```{python}
+#| class: scrolling-y
+
+installment_pmt_df = (
+    duckdb                                                      # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/installments_payments.csv'")      # Read the file
+    .fetchdf()                                                  # Convert to a pandas dataframe
+)
+
+skim(installment_pmt_df)                                        # "Skim" the data set
+
+```
+
+This file has ~1.4M records. 
+
+#### Data Types
+
+*   We've got two ID columns that aren't really continuous: `SK_ID_PREV` and `SK_ID_CURR`
+*   All other variable data types look fine
+
+#### Missing Data
+
+*   `DAYS_ENTR_PAYMENT` and `AMT_PAYMENT` are mostly complete. The few missing values must be unpaid amounts, may due to default but perhaps due to the cutoff date
+
+
+#### Distribution
+
+*   `DAYS_INSTALMENT` seems to be skewed to the right
+
+
+#### Potential feature engineering
+
+*   We could probably synthesize this down to the installment payment timing
+
+
+
+### `POS_CASH_balance.csv`
+
+>   Monthly balance of client's previous loans in Home Credit
+
+These data will link to the application and to past payment installments. Some clients will have previous loans, even multiple, while other may have none.
+
+```{python}
+#| class: scrolling-y
+
+cash_bal_df = (
+    duckdb                                              # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/POS_CASH_balance.csv'")   # Read the file
+    .fetchdf()                                          # Convert to a pandas dataframe
+)
+
+skim(cash_bal_df)                                       # "Skim" the data set
+
+```
+
+This file has ~1.0M records. Understandably, there's more records than applications due to monthly summaries and some customers having multiple previous loans.
+
+#### Data Types
+
+*   We've got two ID columns that aren't really continuous: `SK_ID_PREV` and `SK_ID_CURR`
+*   There's opportunity the `NAME_CONTRACT_STATUS` variable to cast as a `categorical`
+
+#### Missing Data
+
+*   `CNT_INSTALLMENT` and `CNT_INSTALLMENT_FUTURE` are mostly complete. Where there exist missing values, it means there's nothing outstanding in previous loans.
+
+
+#### Distribution
+
+*   `MONTHS_BLANCE` seems to be skewed to the right
+
+
+#### Potential feature engineering
+
+*   It's possible this dataset can be represented in 2 variables:
+    *   Existence of previous loan: boolean
+    *   Median oustanding balance: numeric
+
+
+
+### `credit_card_balance.csv`
+
+>   Monthly balance of client's previous credit card loans in Home Credit
+
+These data are all about credit card loans with Home Credit, specifically the balance that is carried.
+
+```{python}
+#| class: scrolling-y
+
+credit_card_df = (
+    duckdb                                                  # Use DuckDB's query engine
+    .sql("SELECT * FROM '../data/credit_card_balance.csv'")    # Read the file
+    .fetchdf()                                              # Convert to a pandas dataframe
+)
+
+skim(credit_card_df)                                        # "Skim" the data set
+
+```
+
+This file has ~3.8M records. 
+
+#### Data Types
+
+*   We've got two ID columns that aren't really continuous: `SK_ID_PREV` and `SK_ID_CURR`
+*   There's opportunity the `NAME_CONTRACT_STATUS` variable to cast as a `categorical`
+
+#### Missing Data
+
+*   There are several "count" variables with missing date (~20% missing)
+    *   `CNT_INSTALLMENT_MATURE_CUM`, `CNT_DRAWINGS_POS_CURRENT`, `CNT_DRAWINGS_OTHER_CURRENT`, `CNT_DRAWINGS_ATM_CURRENT`
+    *   I assume much of these are missing given there were now withdrawals for the categories
+*   Some "amount" variables corresponding to the same categories above missing similar amounts of data
+
+
+#### Distribution
+
+*   `CNT_INSTALLMENT_MATURE_CUM` is very left skewed (understandable with a cumulative measure)
+*   `MONTHS_BALANCE` is right skewed
+
+
+#### Potential feature engineering
+
+*   It's possible this dataset can be represented in 2 variables:
+    *   Withdrawal amounts relative to limit
+    *   Withdrawal counts
+
+
+## Dataset Joins
+
+With a fair understanding of the files we're working with, let's explore the central idea to the project: Home Credit wants to improve inclusivity of an underserved population. This group is generally without sufficient (or any) credit history. Let's see if we can identify those applications via joining the datasets.
+
+### No Credit Bureau History
+
+For this look, we need to join `application_train.csv` and `bureau.csv`. We'll then aggregate to find out the distribution of credit history among Home Credit clients.
+
+```{python}
+
+bureau_history = (
+    duckdb.sql("""
+        WITH 
+        STEP1 AS (
+            SELECT 
+            at.SK_ID_CURR AS app_id
+            ,COUNT(b.SK_ID_CURR) AS bureau_history_cnt
+
+            FROM '../data/application_train.csv' at
+            LEFT JOIN '../data/bureau.csv' b ON b.SK_ID_CURR = at.SK_ID_CURR
+
+            GROUP BY ALL
+        ) 
+        SELECT 
+        bureau_history_cnt
+        ,COUNT(*) AS app_cnt
+
+        FROM STEP1
+
+        GROUP BY ALL
+
+        ORDER BY bureau_history_cnt
+    """).fetchdf()
+)
+
+bureau_history.head()
+
+```
+
+::: {.callout-note}
+I mentioned previously that `DuckDB` has tremendous syntax and we get our first glimpse in the above code block. Instead of needing to mirror the non-aggregated column names from the `SELECT` clause down to the `GROUP BY` clause, using `GROUP BY ALL` will perform this step for us ([documentation](https://duckdb.org/docs/sql/query_syntax/groupby)). Glorious!
+:::
+
+What we've done here is isolate the number of applications for which there is no history with the credit credit bureau (44,020 applications). Additionally, there are those with little credit history. How much is little? Let's generate a summary to get a more true sense of distribution (we know it's left-skewed) with the `describe()` method of a Pandas dataframe:
+
+```{python}
+
+(bureau_history                                                                     # Take the history aggregated
+    .assign(
+        app_freq = lambda df: df['app_cnt'] / sum(df['app_cnt']),                   # Calculate the percent frequency
+        adj_history_cnt = lambda df: df['app_freq'] * df['bureau_history_cnt']      # Calculate adjusted count of history
+    )
+    ['adj_history_cnt']                                                             # Select the new variable
+    .sum()                                                                          # Get the total (our new average)
+)
+
+```
+
+Here we learn that the average number of historical credit bureau records is `<= 5`. This is the average, so insufficien history is far more likely to be fewer than 3 (`< 3`) records of history. This, we'd probably say, is the definition of insufficient credit history. 
+
+### Supplemental History
+
+Now that we've identified the underserved population this project cares about, let's see if we can't confirm there exists other data points that could help assess credit worthiness. 
+
+In theory, Home Credit has previous application data on these individuals that may contribute. Let's expand on the query above to see:
+
+```{python}
+
+supplement_history = (
+    duckdb.sql("""
+        WITH 
+        STEP1 AS (
+            SELECT 
+            at.SK_ID_CURR
+            ,COUNT(b.SK_ID_CURR) AS bureau_history_cnt
+
+            FROM '../data/application_train.csv' at
+            LEFT JOIN '../data/bureau.csv' b ON b.SK_ID_CURR = at.SK_ID_CURR
+
+            GROUP BY ALL
+        ) 
+        ,STEP2 AS (
+            SELECT 
+            s.SK_ID_CURR AS ap_id
+            ,COUNT(pa.SK_ID_PREV) AS prev_app_history_cnt
+
+            FROM STEP1 s
+            LEFT JOIN '../data/previous_application.csv' pa ON pa.SK_ID_CURR = s.SK_ID_CURR
+
+            WHERE 1 = 1
+            AND bureau_history_cnt <= 5 -- Insufficient credit history
+
+            GROUP BY ALL
+        )
+        SELECT
+        prev_app_history_cnt
+        ,COUNT(*) AS app_cnt
+
+        FROM STEP2
+
+        GROUP BY ALL
+
+        ORDER BY prev_app_history_cnt
+    """).fetchdf()
+)
+
+supplement_history.head()
+
+```
+
+Despite most of this underserved population haing some previous application data with Home Credit we could use to supplement insufficient credit bureau, there's at least 16,237 original applications without any previous history with Home Credit.
+
+```{python}
+
+(supplement_history                                                                     # Take the history aggregated
+    .assign(
+        app_freq = lambda df: df['app_cnt'] / sum(df['app_cnt']),                       # Calculate the percent frequency
+        adj_history_cnt = lambda df: df['app_freq'] * df['prev_app_history_cnt']        # Calculate adjusted count of history
+    )
+    ['adj_history_cnt']                                                                 # Select the new variable
+    .sum()                                                                              # Get the total (our new average)
+)
+
+```
+
+Again, we see the average number of previous application history with Home Credit to be `<= 5`. We'll assume the same rule from above (`< 3`) for the "insufficient" group.
+
+
+### Insufficient History Options
+
+We've established a group that has insufficient history from both the credit bureau and historical Home Credit records. The next step is to re-analyze the `application_train.csv` file only for this group. Any model we design has to be inclusive to this group and leverage what data exists therein.
+
+Here, we're restricting the data to our "insufficient" group and we'll `skim` again:
+
+```{python}
+#| class: scrolling-y
+
+insufficient_history = (
+    duckdb.sql("""
+        WITH 
+        STEP1 AS (
+            SELECT 
+            at.SK_ID_CURR
+            ,COUNT(DISTINCT b.SK_ID_BUREAU) AS bureau_history_cnt
+            ,COUNT(DISTINCT pa.SK_ID_PREV) AS hc_history_cnt
+
+            FROM '../data/application_train.csv' at
+            LEFT JOIN '../data/bureau.csv' b ON b.SK_ID_CURR = at.SK_ID_CURR
+            LEFT JOIN '../data/previous_application.csv' pa ON pa.SK_ID_CURR = at.SK_ID_CURR
+
+            GROUP BY
+            at.SK_ID_CURR
+        )
+        SELECT
+        at.*
+
+        FROM '../data/application_train.csv' at
+        INNER JOIN STEP1 ON STEP1.SK_ID_CURR = at.SK_ID_CURR
+
+        WHERE bureau_history_cnt < 3
+        AND hc_history_cnt < 3
+    """).fetchdf()
+)
+
+skim(insufficient_history)
+
+```
+
+This leaves us with 51,288 applications in the "insufficient history" category. This means we're left with the columns on the `application_train.csv` file as the best souce for predicting default. Let's get some quick observations on this subset of applications:
+
+*   Just as before, most items relating to a dwelling have a high rate of missing data
+    *   I'm curious to see if these data points are even helpful or not
+    *   There's approximately 43 dwelling related predictors; if we take these and reduce to its principal components, we can test if there's anything of predictive value in here 
+*   Mean income and variance thereof is lower in this sample versus the entire `application_train.csv` file, while credit amount and other measures are fairly consistent
+    *   I'm getting the impression that these applications are, in fact, very similar to the population
+    *   As the prompt said originally, due to insufficient credit history, these often falling victim to overly punitive terms by lenders
+
+
+## Underserved Applications
+
+The crux of this problem is to improve the borrowing experience for this underserved group of applications. Therefore, if we find a pretty good model for this group, we're likely to be creating a good model overall. Let's dive into some predictive exploration for this group.
+
+### Documents
+
+There's approximately 20 `FLAG_DOCUMENT_#` features in the dataset. Let's see if these are even valuable to us. For that, we'll reduce to its principal components and then make a simple model.
+
+We'll load the libraries necessary for PCA:
+
+```{python}
+
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+```
+
+Now let's first get our data in the right format. We want 1) all of the `FLAG_DOCUMENT_#` columns in one dataframe and 2) `TARGET` in its own.
+
+```{python}
+
+app_docs = insufficient_history.filter(like='FLAG_DOCUMENT_')       # Extract all FLAG_DOCUMENT variables
+app_docs_scaled = StandardScaler().fit_transform(app_docs)          # Standardize each column
+app_target = insufficient_history[['TARGET']]                       # Get the target variable
+
+```
+
+Now we can reduce these 20 variables to its principal components. Hopefully, a small fraction of those will explain 80-90% of the variance. This would allow us to use fewer variables in a test model. Either way, we'll then be able to run a simple model to see how predictive these are. 
+
+```{python}
+
+import random
+random.seed(814)
+
+pca = PCA(n_components=app_docs_scaled.shape[1])        # Define the PCA
+app_docs_pca = pca.fit_transform(app_docs_scaled)       # Run the PCA
+
+exp_var = pca.explained_variance_ratio_                 # Get the explained variance for each principal component
+
+print(exp_var[0:4])                                     # How much variance is explained by the first 5 components 
+
+```
+
+These first 5 components are only explaining about 1/3 of the variance. PCA isn't helping us reduce the volume of variables. Instead, let's just run a simple, logistic regression model with all these predictors modeling `TARGET`. I really like the `statsmodels` package as it facilitates very similar model summaries to R, which is huge for interpretability.
+
+```{python}
+
+import statsmodels.api as sm
+
+app_docs_mod = sm.Logit(app_target, app_docs_pca).fit()     # Fit a logistic regression
+
+print(app_docs_mod.summary())                               # Print the model summary
+
+```
+
+Clearly, this is a very bad model. We've got a negative $R^2$ and only two of the components are even statistically significant (x1 and x18). We could sum the PCA explained variance from above for those features:
+
+```{python}
+
+exp_var[0] + exp_var[17]        # Explained variance by the only two components that were statistically significant
+
+```
+
+Only 10% of the variance is being explained by these statistically significant components. As is, these won't be helpful in predicting our target variable. It's possible a simple field indicating the count of documents submitted is somewhat helpful. But we'll look at that later.
+
+
+### Dwelling
+
+Let's use a similar exercise on the variables related to dwelling. We have several versions with different measures of central tendency (average, median, and mode). Let's go with the median versions. We know there's a lot of missing values. Let's get rid of those while we explore the predictive power of these variables.
+
+```{python}
+
+app_dwell = insufficient_history.filter(like='_MEDI')       # Extract all the "median" variables related to dwelling
+missing_idx = app_dwell.isnull().any(axis=1)                # Get index for missing values
+
+app_dwell = app_dwell.loc[-missing_idx,:]                 # Remove missing rows from the dwelling variables
+app_target_dwell = app_target.loc[-missing_idx,:]         # Remove missing rows from the target
+
+app_dwell.shape
+
+```
+
+We're left with 14 columns and no missing values. We don't need to normalize these values since they came to us already scaled. If this complete version of dwelling variables isn't decently predictive of `TARGET`, there's no good argument for including these in some way in a larger model.
+
+Let's see if these can be consolidated with PCA.
+
+```{python}
+
+pca = PCA(n_components=app_dwell.shape[1])              # Define the PCA
+app_docs_pca = pca.fit_transform(app_dwell)             # Run the PCA
+
+dwell_exp_var = pca.explained_variance_ratio_           # Get the explained variance for each principal component
+
+print(dwell_exp_var[0:5])                               # How much variance is explained by the first 5 components 
+
+```
+
+Okay! The PCA is helping quite a bit here. We've got 87% of the variance explained in the first 5 components. That's great info! 
+
+This would be a great time for a visualization and showing off the power of `plotnine`, a grammar of graphics visualization package by the same folks who designed `ggplot2` for R. Let's visualize the proportion of variance captured by each principal component.
+
+First, we need to make a dataframe with the principal components we have in a list above.
+
+```{python}
+
+dwell_pca_df = (
+    pd.DataFrame({
+        "component": list(map(lambda x: f'x{x}', range(1, 15))), 
+        "variance": dwell_exp_var
+    })
+    .assign(variance_fmt = lambda df: df["variance"].map(lambda x: f'{x * 100:.1f}%'))
+    .sort_values("variance", ascending = False)
+    .reset_index(drop = True)
+)
+
+component_list = dwell_pca_df["component"]
+component_cat = pd.Categorical(dwell_pca_df["component"], categories = component_list)
+dwell_pca_df = dwell_pca_df.assign(component = component_cat)
+
+dwell_pca_df
+
+```
+
+```{python}
+
+from plotnine import ggplot, geom_col, geom_text, aes, labs, theme_minimal, theme, element_blank, element_text
+
+(
+    ggplot(dwell_pca_df, aes("component", "variance", label = "variance_fmt"))
+    + geom_col(fill = "#BE0000")
+    + geom_text(va = "bottom")
+    + labs(
+        title = "Proportion of variance by principal component", 
+        subtitle = "Dwelling related variables", 
+        x = "Component"
+    )
+    + theme_minimal()
+    + theme(
+        panel_grid_major_x = element_blank(), 
+        panel_grid_major_y = element_blank(), 
+        axis_title_y = element_blank(), 
+        axis_title_x = element_text(margin = {"t": 20,"r": 0,"b": 0,"l": 0,"units": "pt"}), 
+        axis_text_y = element_blank()
+    )
+)
+
+```
+
+Instead of using the principal components as the predictors, let's use the original variables in a logistic regression model (I'm curious which, if any, are predictive of `TARGET`).
+
+```{python}
+
+app_dwell_mod = sm.Logit(app_target_dwell, app_dwell).fit()        # Fit a logistic regression
+
+print(app_dwell_mod.summary())                                     # Print the model summary
+
+```
+
+At first blush, none of these variables, with exception of `FLOORSMAX_MEDI` and `BASEMENTAREA_MEDI`, are any good. The $R^2$ value is poor and most every variable has too high of a p-value. If you remember, 40-71% of these dwelling variables were missing anyway. It's probably best to exclude these entirely from future models. 
+
+It is possible, however, that a simple field for flagging what % of dwelling data is available would be insightful. We'll look into that later.
+
+
+### Categorical variables
+
+Let's turn our attention to some of the discrete fields. For these, we'll want to evaluate the proportion of `TARGET` that span the categories. For example, if the same proportion of men default as women, gender may not, on its own, have much predictive power. The Chi-Square test would be helpful for this, too.
+
+Let's design a function, where we feed the data, a variable name, and we get back the results of the test:
+
+```{python}
+
+import numpy as np
+
+def run_chi_sq(data, var):
+    # Get and print the cross tab
+    data_crosstab = pd.crosstab(data[var], data["TARGET"])
+    data_crosstab_prop = pd.crosstab(data[var], data["TARGET"], normalize='index')
+    print(data_crosstab_prop)
+
+    # Run the chi-square test
+    observed_vals = data_crosstab.to_numpy()
+    observed_table = sm.stats.Table(observed_vals)
+
+    chi_sq_stat = observed_table.test_nominal_association()
+
+    # Print chi-square test results
+    print("\n-----------------------------------")
+    print(f"Chi-square statistic: {chi_sq_stat.statistic}")
+    print(f"P-Value: {chi_sq_stat.pvalue}")
+
+```
+
+This is also just a good way for us to get a sense for the unique values each of these fields entail, since `skimpy` hasn't given us insight into that.
+
+
+#### `NAME_CONTRACT_TYPE`
+
+```{python}
+
+run_chi_sq(app_train_df, "NAME_CONTRACT_TYPE")
+
+```
+
+
+#### `CODE_GENDER`
+
+```{python}
+
+run_chi_sq(app_train_df, "CODE_GENDER")
+
+```
+
+
+#### `FLAG_OWN_CAR`
+
+```{python}
+
+run_chi_sq(app_train_df, "FLAG_OWN_CAR")
+
+```
+
+
+#### `FLAG_OWN_REALTY`
+
+```{python}
+
+run_chi_sq(app_train_df, "FLAG_OWN_REALTY")
+
+```
+
+
+#### `NAME_INCOME_TYPE`
+
+```{python}
+
+run_chi_sq(app_train_df, "NAME_INCOME_TYPE")
+
+```
+
+
+#### `NAME_EDUCATION_TYPE`
+
+```{python}
+
+run_chi_sq(app_train_df, "NAME_EDUCATION_TYPE")
+
+```
+
+
+#### `NAME_FAMILY_STATUS`
+
+```{python}
+
+run_chi_sq(app_train_df, "NAME_FAMILY_STATUS")
+
+```
+
+
+#### `NAME_HOUSING_TYPE`
+
+```{python}
+
+run_chi_sq(app_train_df, "NAME_HOUSING_TYPE")
+
+```
+
+
+#### `ORGANIZATION_TYPE`
+
+```{python}
+#| class: scrolling-y
+
+run_chi_sq(app_train_df, "ORGANIZATION_TYPE")
+
+```
+
+
+Predictably, given the sample size, these are all statistically significant proportions of `TARGET` across the categories. 
+
+The most interesting, and likely predictive, is `NAME_INCOME_TYPE`. Naturally, one's propensity to default on a loan is often tied to their funds flow. Still, values like `Student` never defaulting is fascinating.
+
+`ORGANIZATION_TYPE` is fascinating. There's a lot of of values here which isn't ideal for a model. Looking at the values, there's clearly some that are similar and others that aren't. Could be a good opportunity for a clustering algorithm.
+
+
+### Clustering organizations
+
+Let's first prepare the data. Let's generate two features for each category:
+
+*   Proportion of observations mapped to default (`TARGET` value of `1`)
+*   Number of observatiosn total
+
+That should be a decent input to a simple algorithm like Nearest Neighbors.
+
+```{python}
+
+org_summary = duckdb.sql("""
+    SELECT 
+    ORGANIZATION_TYPE
+    ,SUM(TARGET) / COUNT(*) AS PROP_DEFAULT
+    ,COUNT(*) AS TOTAL_OBS
+    FROM app_train_df
+    GROUP BY
+    ORGANIZATION_TYPE
+""").fetchdf()
+
+org_summary.head()
+
+```
+
+Let's now construct the nearest neighbors algorithm and apply it to these measures.
+
+```{python}
+
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.neighbors import kneighbors_graph
+
+org_X = org_summary.loc[:,["PROP_DEFAULT", "TOTAL_OBS"]].to_numpy()
+knn_graph = kneighbors_graph(org_X, 5, include_self=False)
+
+agg_clustering = AgglomerativeClustering(n_clusters=5, connectivity=knn_graph)
+org_Labels = agg_clustering.fit_predict(org_X)
+
+org_Labels
+
+```
+
+With the clustering complete, we can now take these labels, add them back into the organization summary and get a sense for which types of organizations are similar.
+
+```{python}
+
+org_summary["ORG_CLASS"] = org_Labels
+
+duckdb.sql("""
+    SELECT
+    ORG_CLASS
+    ,STRING_AGG(ORGANIZATION_TYPE, ',') AS ORG_TYPES
+    FROM org_summary
+    GROUP BY
+    ORG_CLASS
+""").show()
+
+```
+
+Looking at these results, it wasn't an ideal clusting of these types since we still have most types concentrated in two classes. However, mathematically, these are fairly similar in their relationship with `TARGET`. We are seeing some benefit as this would be a far better predictor that the original `ORGANIZATION_TYPE`.
+
+
+# Conclusion
+
+## Summary
+
+There's plenty more to explore with these data sets. As we move on from the exploratory data analysis phase and into modeling, there will continue to be emphasis placed on discovering insights.
+
+At this point, however, we've reached some key milestones:
+
+1.  We have a very thorough understanding of the data
+    *   What fields are available
+    *   How each data set connects to each other
+2.  We've explored who is this cohort of under served applicants
+    *   What does "insufficient" credit history look like
+    *   How many applications meet this definition
+    *   How similar these sample of applications are to the population
+3.  We also began exploration of predictive power
+    *   What fields of the application are likely distractions
+    *   How to reduce the dimensionality of continuous variables
+4.  We also honed in on discrete values and the information they held
+    *   The unique range of values present in categorical variables
+    *   Approaches to clusting discrete variables for dimensionality reduction
+
+
+## Key Insights
+
+Throughout this exploration of the data, a few key insights have surfaced:
+
+1.  Data from past applications and credit bureau history applies to 6 of every 7 applications
+2.  The remainder are those with "insufficient" history, defined as fewer than 3 previous records
+3.  Applicantions with insufficient history are, as a whole, very similar to the population at large
+4.  `DOCUMENT` and `DWELLING` related variables present little to no predictive power for default
+5.  A handful of categorical variables seem like promising candidates for high predictive power
+    *   Namely: `NAME_INCOME_TYPE`, `NAME_EDUCATION_TYPE`, and `ORGANIZATION_TYPE`

@@ -1,0 +1,3 @@
+*py.qmd linguist-language=Python
+*.html linguist-vendored
+exploratory-data-analysis.py_files/** linguist-vendored

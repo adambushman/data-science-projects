@@ -1,0 +1,150 @@
+---
+title: "Car Pric Regression"
+description: "Leveraging linear regression in R to predict the price of cars"
+author: "Adam Bushman"
+format: html
+---
+
+
+# Introduction
+
+Data sourced from ,
+[{modeldata}](https://modeldata.tidymodels.org/reference/attrition.html) of Posit, accessed October 3rd, 2024. 
+ 
+# Analysis Prep
+
+```{r}
+
+library('tidyverse')
+library('tidymodels')
+library('modeldata')
+
+```
+
+
+```{r}
+
+glimpse(attrition)
+
+```
+
+# Simple Exploratory Data Analysis
+
+# Feature Engineering
+
+# Setup training and testing sets
+
+```{r}
+
+split_obj <- initial_split(attrition)
+
+att_train <- training(split_obj)
+att_test <- testing(split_obj)
+
+```
+
+```{r}
+
+list(
+    "Training size" = nrow(att_train), 
+    "Testing size" = nrow(att_test)
+)
+
+```
+
+# Defining the model, recipe
+
+```{r}
+
+def_mod <- logistic_reg() %>%
+    set_engine("glm") %>%
+    set_mode("classification")
+
+
+```
+
+```{r}
+
+fitted <- def_mod %>%
+    fit(
+        Attrition ~ ., 
+        data = att_train
+    )
+
+glance(fitted)
+
+```
+
+```{r}
+
+tidy(fitted) %>% 
+    mutate(sig_level = case_when(
+        p.value > 0.1 ~ "", 
+        p.value > 0.5 ~ ".", 
+        p.value > 0.01 ~ "*", 
+        p.value > 0.001 ~ "**", 
+        TRUE ~ "***"
+    )) %>% 
+    print(n = nrow(.))
+
+```
+
+```{r}
+
+formula <- Attrition ~ . -EducationField -Age -Department -HourlyRate -MonthlyIncome -MonthlyRate -StockOptionLevel -TotalWorkingYears -PercentSalaryHike -PerformanceRating
+
+fitted2 <- def_mod %>%
+    fit(formula, data = att_train)
+
+glance(fitted2)
+
+```
+
+
+# Confirm model
+
+```{r}
+
+set.seed(814)
+
+att_folds <- vfold_cv(att_train, v = 10)
+
+att_folds
+
+```
+
+```{r}
+
+run_model <- function(splits) {
+    train <- analysis(splits)
+    test <- assessment(splits)
+
+    mod <- glm(formula, data = train, family = binomial)
+
+    summary <- summary(mod)
+    pred <- predict(mod, newdata = test, type = "response")
+    tabl <- table(ifelse(pred > 0.5, 1, 0), ifelse(test$Attrition == "Yes", 1, 0))
+
+    acc = sum(diag(tabl)) / sum(tabl)
+    prec = tabl[2,2] / (tabl[2,2] + tabl[2,1])
+    rec = tabl[2,2] / (tabl[2,2] + tabl[1,2])
+
+    list(acc, prec, rec)
+}
+
+```
+
+```{r}
+
+t <- att_folds$splits %>%
+    purrr::map(run_model) %>%
+    tibble() %>%
+    unnest_wider(".", names_sep = "_")
+
+colnames(t) = c("acc", "prec", "rec")
+
+t %>% summarise(across(acc:rec, mean))
+
+```
+
+# Evaluating metrics

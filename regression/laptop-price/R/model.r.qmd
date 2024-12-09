@@ -1,0 +1,278 @@
+---
+title: "Laptop Price Regression"
+description: "Leveraging decision trees in {tidymodels} to predict the price of laptops"
+author: "Adam Bushman"
+format: html
+---
+
+
+# Introduction
+
+Data sourced from Kaggle,
+[Laptop Price](https://www.kaggle.com/datasets/muhammetvarl/laptop-price), accessed January 26th, 2024. Downloaded extracts are saved within this repository and loaded for purpose of modeling.
+
+# Analysis Prep
+
+```{r}
+
+# Loading libraries
+library('tidyverse')
+library('tidymodels')
+library('stringr')
+
+# Reading the data
+here::i_am("decision-tree/regression/laptop-price/R/model.r.qmd")
+lap_data <- read.csv(here::here("decision-tree", "regression", "laptop-price", "laptop_price.csv"))
+
+```
+
+
+# Simple Exploratory Data Analysis
+
+```{r}
+
+# Peek at the data
+skimr::skim(lap_data)
+
+# See some examples
+glimpse(lap_data)
+
+```
+
+# Feature Engineering
+
+```{r}
+
+# Extract resolution
+getSqPix <- function(x) {
+  w = str_extract(x, "\\d+(?=x)")
+  h = str_extract(x, "(?<=x)\\d+")
+  # a_pos = str_locate(x, "\\d+x")
+  return(as.integer(w) * as.integer(h))
+}
+
+# Extract harddrive size
+getHD <- function(x) {
+  values <- str_extract_all(x, "\\b\\d\\S*")[[1]]
+  total = 0
+  for(v in values) {
+    size = stringr::str_extract(v, "\\d+")
+    unit = str_sub(v, str_length(v) - 1)
+    total = total + (as.integer(size) * ifelse(unit == "TB", 1000, 1))
+  }
+  return(total)
+}
+
+# Extract harddrive size
+getHDT <- function(x) {
+  type = c()
+  if(stringr::str_detect(x, "SSD")) {
+    type[length(type) + 1] = "SSD"
+  }
+  if(stringr::str_detect(x, "HDD")) {
+    type[length(type) + 1] = "HDD"
+  }
+  if(stringr::str_detect(x, "Hybrid")) {
+    type[length(type) + 1] = "Hybrid"
+  }
+  if(stringr::str_detect(x, "Flash")) {
+    type[length(type) + 1] = "Flash Storage"
+  }
+  
+  return(paste(type, collapse = "-"))
+}
+
+# Modifiy features
+lap_data_c <- 
+  lap_data %>%
+  mutate(
+    Company = factor(Company), 
+    TypeName = factor(TypeName), 
+    SqPixels = purrr::map_int(ScreenResolution, getSqPix), 
+    RamRGB = as.integer(stringr::str_extract(Ram, "\\d+")), 
+    HardDriveGB = purrr::map_int(Memory, getHD), 
+    HardDriveType = factor(purrr::map_chr(Memory, getHDT)), 
+    OpSys = factor(OpSys), 
+    WeightKg = as.numeric(str_replace(Weight, "kg", ""))
+  )
+
+```
+
+
+# Setup training and testing sets
+
+```{r}
+
+# Defining a split
+lap_split <- initial_split(lap_data_c)
+
+# Data sets
+lap_train <- training(lap_split)
+lap_test <- testing(lap_split)
+
+```
+
+
+# Defining the model, recipe
+
+```{r}
+
+# Model
+lap_mod <- 
+  decision_tree(
+    cost_complexity = tune(),
+    tree_depth = tune()
+  ) %>%
+  set_engine("rpart") %>%
+  set_mode("regression")
+
+# Recipe
+lap_rec <-
+  recipe(Price_euros ~ ., data = lap_train) %>%
+  update_role(laptop_ID, Product, Cpu, Gpu, new_role = "ID")
+
+```
+
+# Setting up the workflow and tuning
+
+```{r}
+
+# Workflow
+lap_wkf <- 
+  workflow() %>%
+  add_model(lap_mod) %>%
+  add_recipe(lap_rec)
+
+# Tuning grid
+lap_grid <- grid_regular(
+  cost_complexity(),
+  tree_depth(),
+  levels = 5
+)
+
+# Setting up the tuning
+lap_tune <- 
+  lap_wkf %>%
+  tune_grid(
+    resamples = vfold_cv(lap_train), 
+    grid = lap_grid
+  )
+
+```
+
+# Evaluating metrics
+
+```{r}
+
+# Collecting metrics
+metrics <- 
+  lap_tune %>% 
+  collect_metrics() 
+
+# Plotting results
+metrics %>%
+  filter(.metric == "rmse") %>%
+  ggplot(aes(as.factor(cost_complexity), as.factor(tree_depth))) +
+    geom_point(
+      aes(size = mean), 
+      alpha = 0.2
+    ) +
+    labs(
+      x = "Cost Complexity", 
+      y = "Tree Depth"
+    )
+
+```
+
+Cost complexity of `0.000562` and a tree depth of `8` seems like a nice balance. Only marginal gains are achieved with anything better.
+
+```{r}
+
+# Choosing the hyperparameters
+best_tree <- 
+  metrics %>%
+  mutate(id = 1:nrow(.)) %>%
+  filter(id == 28) %>%
+  select(cost_complexity, tree_depth, .config)
+
+# Finalize the workflow
+final_wkf <- 
+  lap_wkf %>% 
+  finalize_workflow(best_tree)
+
+```
+
+Fitting a final model.
+
+```{r}
+
+# Fit the final model based on the workflow
+final_fit <- 
+  final_wkf %>%
+  last_fit(lap_split) 
+
+```
+
+
+Sampling some of the laptop records and the predicted vs actual prices.
+
+```{r}
+
+# Compiling the results
+results <- 
+  tibble(
+    Product = lap_test$Product, 
+    actual = lap_test$Price_euros, 
+    pred = final_fit$.predictions[[1]]$.pred
+  )
+
+set.seed(814)
+
+# Getting a sample
+results_sample <-
+  results %>%
+  sample_n(10)
+
+```
+
+```{r}
+
+# Plot
+ggplot(results_sample) +
+  geom_segment(
+    aes(x = actual, xend = pred, y = Product, yend = Product), 
+    linewidth = 1.25, 
+    color = "lightgray"
+  ) +
+  geom_point(
+    aes(x = actual, y = Product), 
+    size = 2.5, 
+    color = "#A76571"
+  ) +
+  geom_point(
+    aes(x = pred, y = Product), 
+    size = 2.5, 
+    color = "#565676"
+  ) +
+  scale_x_continuous(
+    labels = scales::label_currency(prefix = "€")
+  ) +
+  labs(
+    title = glue::glue(
+      "<span style='color: #A76571'>**Actual**</span> vs ", 
+      "<span style='color: #565676'>**Predicted**</span>" 
+    ), 
+    x = "Price in Euros"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = ggtext::element_markdown(), 
+    panel.grid.major.y = element_blank(), 
+    panel.grid.minor.y = element_blank(), 
+    panel.grid.minor.x = element_blank(), 
+    axis.title.y = element_blank()
+  )
+
+```
+
+
