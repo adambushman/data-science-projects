@@ -14,7 +14,7 @@ This portfolio showcases my data science projects, highlighting my skills and ex
 
 Each project in this portfolio leverages a unique modeling approach and showcases my ability to adapt to diverse challenges using R, Python, and Julia. For each, you'll find links to the raw code and rendered notebooks, providing insight into the methods, results, and takeaways.
 
-### Hybrid
+### ☯️ Hybrid
 
 *Projects spanning multiple languages, modeling approaches, etc., for solving complex business problems*
 
