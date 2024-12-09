@@ -114,8 +114,8 @@ My involvement in the project was comprehensive from start to finish, spanning t
   [raw code](https://github.com/adambushman/home-credit-default-risk-group/blob/main/models/final-model/Random%20Forest%20-%20Test%20Set.Rmd)
 - **Model Exploration**: 
   - Performance Results:
-  [rendered notebook](), 
-  [raw code]()
+  [rendered notebook](https://adambushman.github.io/home-credit-default-risk-group/models/model-summary.html), 
+  [raw code](https://github.com/adambushman/home-credit-default-risk-group/blob/main/models/model-summary.qmd)
   - Random Forest: 
   [rendered notebook](https://adambushman.github.io/home-credit-default-risk-group/models/random-forest/Random-Forest.html), 
   [raw code](https://github.com/adambushman/home-credit-default-risk-group/blob/main/models/random-forest/Random%20Forest.Rmd)
