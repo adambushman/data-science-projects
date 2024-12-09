@@ -1,4 +1,4 @@
-![Data Science Project Banner](./portfolio-banner.jpg)
+![Data Science Portfolio Banner](./portfolio-banner.jpg)
 
 ## Who am I?
 
@@ -46,6 +46,17 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | Zoo Animal Classes | Predicting classes of zoo animals | `R` | Decision Tree | [Code](https://github.com/adambushman/data-science-projects/blob/master/classification/zoo-animal-classes/R/model.r.qmd) |
 | Employee Attrition | Classifying employees to leave and stay at the company | `R` | Decision Tree | - |
 | Breast Cancer | Predicting existance of breast cancer among patients | `Python` | Decision Tree | - |
+
+
+## 🌀 Clustering
+
+*Unsupervised learning projects for deriving insights from unknown groupings*
+
+| Name | Description | Language(s) | Modeling Approach | Links |
+| --- | --- | --- | --- | --- |
+<br>
+
+<br>
 
 
 ### 🕰️ Time Series

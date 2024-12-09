@@ -1,16 +1,46 @@
-![Data Science Project Banner](./data-science-proj-banner.jpg)
+# README Coming Soon
 
-# Data Science Projects
+## Overview
 
-Exploring data science algorithms in R, Python, and Julia. 
+Lorem ipsum
 
-## Description
 
-A growing repository of projects wherein I deploy data science algorithms to solve real world problems. Where possible, I plan to build models in R, Python, and Julia. The idea is to observe the consistent patterns found in differing languages and workflows.
+## Data Description
 
-## Helpful Resources
+- **Source**: ...
+- **Size**: ...
+- **Target Variable**: ...
+- **Predictor Variable(s)**: ...
 
-[Stat Quest (YouTube)](https://www.youtube.com/@statquest)
-[{tidymodels} suite](https://www.tidymodels.org/)
-[{scikitlearn} suite](https://scikit-learn.org/stable/)
-[Julia Documentation](https://docs.julialang.org/en/v1/)
+
+## Methods and Models
+
+Lorem ipsum dolor sit amet
+
+
+## Results
+
+Lorem ipsum dolor sit amet
+
+
+## Tools and Technologies
+
+Lorem ipsum dolor sit amet
+
+
+## Repository Structure
+
+
+## How to Run the Code
+
+Lorem ipsum dolor sit amet
+
+
+## References
+
+...
+
+
+## Rendered Notebook
+
+...
