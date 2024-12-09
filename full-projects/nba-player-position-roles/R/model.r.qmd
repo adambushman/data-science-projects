@@ -24,20 +24,22 @@ execute:
 ### Load Libraries & Data Set
 
 ```{r}
-library('tidyverse')
-library('dataPreparation')
+library("tidyverse")
+library("tidymodels")
+library("tidyclust")
+library("dataPreparation")
 
-library('kernlab')          # Weighted kernal k-means
-library('dendextend')       # Working with dendrograms
-library('cluster')          # Generating silhouette measures
+library("kernlab") # Weighted kernal k-means
+library("dendextend") # Working with dendrograms
+library("cluster") # Generating silhouette measures
 
-setwd('full-projects/R/nba-player-position-roles')
+setwd("full-projects/nba-player-position-roles/R")
 ```
 
 Import the data
 
 ```{r}
-nba_stats <- read.csv('nba-player-stats_first-5-seasons.csv')
+nba_stats <- read.csv("nba-player-stats_first-5-seasons.csv")
 ```
 
 ```{r}
@@ -68,7 +70,7 @@ nba_scaled <- scale(nba_numeric)
 Using the scaled variables, let's perform PCA. We'll try to cluster with and without PCA. We'll have both data set versions at our disposal for clustering.
 
 ```{r}
-library('FactoMineR')
+library("FactoMineR")
 ```
 
 ```{r}
@@ -98,7 +100,7 @@ Historically, basketball has used 5 positions. In modern times, this has been re
 
 ```{r}
 clustering_grid <- data.frame(
-    clusters = 3:12
+    clusters = 3:20
 )
 ```
 
@@ -124,7 +126,7 @@ calc_wss <- function(cluster_assignments, data) {
 
 calc_avg_sil <- function(fit) {
     sil <- silhouette(fit, dist)
-    avg_sil <- mean(sil[,3])
+    avg_sil <- mean(sil[, 3])
     return(avg_sil)
 }
 
@@ -138,7 +140,7 @@ Let's setup a function to run a KMeans cluster and generate some metrics:
 cluster_kmeans <- function(k, data, dist) {
     # Run the algorithm
     fit <- kkmeans(
-        as.matrix(data), 
+        as.matrix(data),
         centers = k
     )
     cluster_assignments <- as.vector(fit)
@@ -169,17 +171,13 @@ kk_pca_dist <- get_kernel_dist(as.matrix(nba_pca_data))
 Let's do the same thing but for `hclust`:
 
 ```{r}
-cluster_hclust <- function(k, data, dist) {
+cluster_hclust <- function(k, data) {
     # Run the algorithm
-    fit <- hclust(
-        dist, 
-        method = "ward.D2"
-    )
-    cluster_assignments <- cutree(fit, 3)
+    model <- hier_clust(num_clusters = k, linkage_method = "complete")
+    fit <- model |> fit(~ ., data = as.data.frame(data))
 
-    wss <- calc_wss(cluster_assignments, data)
-    avg_sil <- calc_avg_sil(cluster_assignments)
-    return(list("wss" = wss, "avg_sil" = avg_sil))
+    wss <- fit |> sse_within() |> select(wss) |> unlist() |> sum()
+    return(wss)
 }
 ```
 
@@ -196,8 +194,8 @@ Let's now generate our clusters!
 clustering_grid <-
     clustering_grid |>
     mutate(
-        hclust = map(clusters, ~cluster_hclust(.x, nba_scaled, hc_scaled_dist)), 
-        kkmeans = map(clusters, ~cluster_kmeans(.x, nba_scaled, kk_scaled_dist))
+        hclust = map(clusters, ~ cluster_hclust(.x, nba_scaled, hc_scaled_dist)),
+        kkmeans = map(clusters, ~ cluster_kmeans(.x, nba_scaled, kk_scaled_dist))
     )
 ```
 
@@ -207,6 +205,47 @@ clustering_grid |>
     ggplot(
         aes(x = as.factor(clusters), y = kkmeans_pca)
     ) +
-        geom_col() +
-        facet_wrap(~kkmeans_pca_id, nrow = 1, scales = "free")
+    geom_col() +
+    facet_wrap(~kkmeans_pca_id, nrow = 1, scales = "free")
+```
+
+
+
+Using kmeans clustering, looks like the elbow point is between 10 and 13...
+
+
+```{r}
+cluster_kmeans <- function(k, data) {
+    fit <- kmeans(data, k)
+    vals = glance(fit)
+    return(vals$tot.withinss)
+}<-
+```
+
+```{r}
+clustering_grid <-
+    clustering_grid |>
+    mutate(
+        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_scaled)), 
+        hclust = map(clusters, ~ cluster_hclust(.x, nba_scaled))
+    )
+```
+
+```{r}
+clustering_grid |>
+    pivot_longer(cols = -clusters) |> 
+    unnest(value) |>
+ggplot(aes(factor(clusters), as.numeric(value))) +
+    geom_line(aes(color = name), group = 1) +
+    facet_wrap(~name, ncol = 1, scales = "free")
+```
+
+
+The data aren't great for clustering so far. Not adept at determining different clusters.
+
+```{r}
+# install.packages('mclust')
+library('mclust')
+gmm <- Mclust(nba_scaled)
+summary(gmm)
 ```
