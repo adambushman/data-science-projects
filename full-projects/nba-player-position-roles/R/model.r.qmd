@@ -32,14 +32,17 @@ library("dataPreparation")
 library("kernlab") # Weighted kernal k-means
 library("dendextend") # Working with dendrograms
 library("cluster") # Generating silhouette measures
+```
 
+```{r}
+#| eval: false
 setwd("full-projects/nba-player-position-roles/R")
 ```
 
 Import the data
 
 ```{r}
-nba_stats <- read.csv("nba-player-stats_first-5-seasons.csv")
+nba_stats <- read.csv("../nba-player-data.csv")
 ```
 
 ```{r}
@@ -47,8 +50,11 @@ glimpse(nba_stats)
 ```
 
 ```{r}
-nba_stats <- nba_stats |>
-    mutate(o_3pp = ifelse(is.na(o_3pp), 0, o_3pp))
+na_summary <- sapply(nba_stats, function(col) {
+    sum(is.na(col) | col == "", na.rm = TRUE)
+})
+
+any(na_summary > 0)
 ```
 
 
@@ -81,7 +87,7 @@ nba_pca <- princomp(nba_scaled)
 summary(nba_pca)
 ```
 
-We have 38 source variables so 38 principal components. The first 5 components explain 82% of variance. The first 9 explain 91% of the variance. The first 13 principal components explain 95%. That's just 1/3 of our original number of features. 
+We have 199 source variables so 199 principal components. The first 12 components explain 75% of variance. The first 36 explain 90% of the variance. The first 53 principal components explain 95%. That's just 1/4 of our original number of features. 
 
 PCA did a good job at 1) reducing dimensionality and 2) eliminating any colinearity of features. 
 
