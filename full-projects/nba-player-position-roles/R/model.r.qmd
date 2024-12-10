@@ -233,7 +233,7 @@ nba_ids$cluster <- fit$cluster
 nba_ids |>
     group_by(cluster) |>
     summarise(
-        players = paste(sample(player_name, 5), collapse = ",")
+        players = paste(sample(profile_name, 5), collapse = ",")
     )
 ```
 
@@ -241,7 +241,7 @@ Let's test some players. We should see three different cluster assignments.
 
 ```{r}
 nba_ids |> filter(
-    player_name %in% c(
+    profile_name %in% c(
         "Victor Wembanyama",
         "Nikola Jokic",
         "Clint Capela",
@@ -256,7 +256,7 @@ Let's try another. These three all have similar physical profiles, roles, and pl
 
 ```{r}
 nba_ids |> filter(
-    player_name %in% c(
+    profile_name %in% c(
         "Jimmy Butler",
         "Jayson Tatum",
         "Jaylen Brown"
@@ -270,7 +270,7 @@ What about all players who've historically been labeled "point guards". Each of 
 
 ```{r}
 nba_ids |> filter(
-    player_name %in% c(
+    profile_name %in% c(
         "Collin Sexton",
         "Bruce Brown",
         "Stephen Curry",
@@ -290,8 +290,8 @@ getMinMax <- function(data, cluster = 1) {
     data_f <- data_f |> arrange(desc(val))
 
     return(c(
-        data_f$player_name[nrow(data_f)],
-        data_f$player_name[1]
+        data_f$profile_name[nrow(data_f)],
+        data_f$profile_name[1]
     ))
 }
 ```
@@ -315,3 +315,19 @@ How many assignments by cluster do we have?
 ```{r}
 nba_ids |> count(cluster)
 ```
+
+
+```{r}
+nba_stats$cluster <- fit$cluster
+```
+
+```{r}
+nba_stats |>
+    group_by(cluster) |>
+    summarise(
+        min_min = min(profile_games_played),
+        max_min = max(profile_games_played)
+    )
+```
+
+Get volume adjusted measures and consider dropping "minutes" and "games_played". 

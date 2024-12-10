@@ -24,40 +24,40 @@ files
 
 ```{r}
 prep_file <- function(path, counter) {
+    # Generate prefix
+    prefix <- stringr::str_extract(path, "(?<=_)[^_\\.-]+")
     # Read file
     data <- read.csv(path)
     # Create new column names
     data <- data |>
         janitor::clean_names()
     # Drop columns
-    data <- data |> dplyr::select(-c(team_abbreviation, games_played, minutes))
-    if(counter != 0) {
-        data <- data |> dplyr::select(-c(name))
+    if (prefix != "profile") {
+        data <- data |> dplyr::select(-c(team_abbreviation, games_played, minutes, name))
     }
     # Add prefix
-    prefix <- stringr::str_extract(path, "(?<=_)[^_\\.-]+")
-    colnames(data) = paste(prefix, colnames(data), sep = "_")
+    colnames(data) <- paste(prefix, colnames(data), sep = "_")
     # Return data
     return(data)
 }
 ```
 
 ```{r}
-new_tibble = data.frame(matrix(NA, nrow = 500, ncol = 0))
-counter = 0
-for(f in files) {
+new_tibble <- data.frame(matrix(NA, nrow = 500, ncol = 0))
+counter <- 0
+for (f in files) {
     new_tibble <- new_tibble |>
         dplyr::bind_cols(
             prep_file(f, counter)
         )
-    counter = counter + 1
+    counter <- counter + 1
 }
 ```
 
 ```{r}
 write.csv(
-    new_tibble, 
-    "full-projects/nba-player-position-roles/nba-player-data.csv", 
+    new_tibble,
+    "full-projects/nba-player-position-roles/nba-player-data.csv",
     row.names = FALSE
 )
 ```
