@@ -30,8 +30,6 @@ library("tidyclust")
 library("dataPreparation")
 
 library("kernlab") # Weighted kernal k-means
-library("dendextend") # Working with dendrograms
-library("cluster") # Generating silhouette measures
 ```
 
 ```{r}
@@ -50,8 +48,9 @@ glimpse(nba_stats)
 ```
 
 ```{r}
+# Check for missing or empty values
 na_summary <- sapply(nba_stats, function(col) {
-    sum(is.na(col) | col == "", na.rm = TRUE)
+    sum(is.na(col) | is.null(col) | col == "", na.rm = TRUE)
 })
 
 any(na_summary > 0)
@@ -62,7 +61,16 @@ any(na_summary > 0)
 
 ```{r}
 nba_numeric <- nba_stats |> select(where(is.numeric))
-nba_ids <- nba_stats |> select(where(is.character))
+nba_ids <- nba_stats |> select(where(is.character) | c(profile_height_in, profile_weight_lbs))
+```
+
+```{r}
+# Check for non-finite values
+nonf_summary <- sapply(nba_numeric, function(col) {
+    sum(!is.finite(col), na.rm = TRUE)
+})
+
+any(nonf_summary > 0)
 ```
 
 Scale the numeric variables:
@@ -87,7 +95,7 @@ nba_pca <- princomp(nba_scaled)
 summary(nba_pca)
 ```
 
-We have 199 source variables so 199 principal components. The first 12 components explain 75% of variance. The first 36 explain 90% of the variance. The first 53 principal components explain 95%. That's just 1/4 of our original number of features. 
+We have 199 numeric, source variables so 199 principal components. The first 12 components explain 75% of variance. The first 36 explain 90% of the variance. The first 53 principal components explain 95%. That's just 1/4 of our original number of features explaining nearly all of the total variance. 
 
 PCA did a good job at 1) reducing dimensionality and 2) eliminating any colinearity of features. 
 
@@ -95,6 +103,16 @@ Let's save our results:
 
 ```{r}
 nba_pca_data <- as.data.frame(nba_pca$scores)
+```
+
+Let's visualize some of these principal components:
+
+```{r}
+ggplot(
+    nba_pca_data,
+    aes(Comp.1, Comp.2)
+) +
+    geom_point()
 ```
 
 
@@ -110,148 +128,190 @@ clustering_grid <- data.frame(
 )
 ```
 
-We'll also need a couple of functions for later:
+Against each of these, we can run different clustering algorithms and produce measures for the "within sum of squares". This will help us determine the proper number of clusters derived from the data.
 
-```{r}
-calc_wss <- function(cluster_assignments, data) {
-    wss <- 0
-    for (j in unique(cluster_assignments)) {
-        # Subset data for cluster j
-        cluster_points <- data[cluster_assignments == j, , drop = FALSE]
-        # Handle single-point clusters
-        if (nrow(cluster_points) == 1) {
-            cluster_centroid <- cluster_points
-        } else {
-            cluster_centroid <- colMeans(cluster_points)
-        }
-        # Sum squared distances to the centroid
-        wss <- wss + sum(rowSums((cluster_points - cluster_centroid)^2))
-    }
-    return(wss)
-}
-
-calc_avg_sil <- function(fit) {
-    sil <- silhouette(fit, dist)
-    avg_sil <- mean(sil[, 3])
-    return(avg_sil)
-}
-
-```
 
 ### Partition Clustering
 
-Let's setup a function to run a KMeans cluster and generate some metrics:
+Let's setup a function to run a kmeans cluster for every number of cluster in the above grid and generate the respective performance metric:
 
 ```{r}
-cluster_kmeans <- function(k, data, dist) {
-    # Run the algorithm
-    fit <- kkmeans(
-        as.matrix(data),
-        centers = k
-    )
-    cluster_assignments <- as.vector(fit)
-
-    wss <- calc_wss(cluster_assignments, data)
-    avg_sil <- calc_avg_sil(fit)
-    return(list("wss" = wss, "avg_sil" = avg_sil))
+cluster_kmeans <- function(k, data) {
+    fit <- kmeans(data, k)
+    vals <- glance(fit)
+    return(vals$tot.withinss)
 }
-```
-
-We need to setup a kernel distance function that we can use for kkmeans:
-
-```{r}
-get_kernel_dist <- function(data) {
-    kernel_matrix <- kernelMatrix(rbfdot(sigma = 0.1), data)
-    pseudo_dist_matrix <- as.dist(sqrt(outer(diag(kernel_matrix), diag(kernel_matrix), "+") - 2 * kernel_matrix))
-
-    return(pseudo_dist_matrix)
-}
-
-kk_scaled_dist <- get_kernel_dist(as.matrix(nba_scaled))
-kk_pca_dist <- get_kernel_dist(as.matrix(nba_pca_data))
-```
+```   
 
 
 ### Hierarchical Clustering
 
-Let's do the same thing but for `hclust`:
+Let's do the same thing but for an hclust algorithm:
 
 ```{r}
 cluster_hclust <- function(k, data) {
     # Run the algorithm
     model <- hier_clust(num_clusters = k, linkage_method = "complete")
-    fit <- model |> fit(~ ., data = as.data.frame(data))
+    fit <- model |> fit(~., data = as.data.frame(data))
 
-    wss <- fit |> sse_within() |> select(wss) |> unlist() |> sum()
+    wss <- fit |>
+        sse_within() |>
+        select(wss) |>
+        unlist() |>
+        sum()
     return(wss)
 }
 ```
 
-We'll default to a standard Euclidean distance metric
-
-```{r}
-hc_scaled_dist <- dist(nba_scaled, method = "euclidean")
-```
-
-
 Let's now generate our clusters!
 
+### Cluster Results
+
+Let's map over the number of clusters and execute the respective algorithm.
+
 ```{r}
-clustering_grid <-
+clustering_grid_01 <-
     clustering_grid |>
     mutate(
-        hclust = map(clusters, ~ cluster_hclust(.x, nba_scaled, hc_scaled_dist)),
-        kkmeans = map(clusters, ~ cluster_kmeans(.x, nba_scaled, kk_scaled_dist))
-    )
-```
-
-```{r}
-clustering_grid |>
-    tidyr::unnest_longer("kkmeans_pca") |>
-    ggplot(
-        aes(x = as.factor(clusters), y = kkmeans_pca)
-    ) +
-    geom_col() +
-    facet_wrap(~kkmeans_pca_id, nrow = 1, scales = "free")
-```
-
-
-
-Using kmeans clustering, looks like the elbow point is between 10 and 13...
-
-
-```{r}
-cluster_kmeans <- function(k, data) {
-    fit <- kmeans(data, k)
-    vals = glance(fit)
-    return(vals$tot.withinss)
-}<-
-```
-
-```{r}
-clustering_grid <-
-    clustering_grid |>
-    mutate(
-        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_scaled)), 
+        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_scaled)),
         hclust = map(clusters, ~ cluster_hclust(.x, nba_scaled))
     )
 ```
 
+We can now plot these and find the "elbow", or the point of diminishing returns from an increasing the number of clusters.
+
 ```{r}
-clustering_grid |>
-    pivot_longer(cols = -clusters) |> 
+clustering_grid_01 |>
+    pivot_longer(cols = -clusters) |>
     unnest(value) |>
-ggplot(aes(factor(clusters), as.numeric(value))) +
+    ggplot(aes(factor(clusters), as.numeric(value))) +
     geom_line(aes(color = name), group = 1) +
     facet_wrap(~name, ncol = 1, scales = "free")
 ```
 
 
-The data aren't great for clustering so far. Not adept at determining different clusters.
+
+Using kmeans clustering, looks like the elbow point right around 8. Let's see if we get different results using just the first 53 principal components. 
 
 ```{r}
-# install.packages('mclust')
-library('mclust')
-gmm <- Mclust(nba_scaled)
-summary(gmm)
+clustering_grid_02 <-
+    clustering_grid |>
+    mutate(
+        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_pca_data[, 1:53])),
+        hclust = map(clusters, ~ cluster_hclust(.x, nba_pca_data[, 1:53]))
+    )
+```
+
+```{r}
+clustering_grid_02 |>
+    pivot_longer(cols = -clusters) |>
+    unnest(value) |>
+    ggplot(aes(factor(clusters), as.numeric(value))) +
+    geom_line(aes(color = name), group = 1) +
+    facet_wrap(~name, ncol = 1, scales = "free")
+```
+
+This approach indicates an elbow right around 7 clusters.
+
+
+```{r}
+# install.packages("fpc")
+# library(fpc)
+
+cl <- dbscan(nba_pca_data[, 1:53], eps = 12, MinPts = 100)
+
+summary(cl)
+```
+
+
+```{r}
+set.seed(814)
+fit <- kmeans(nba_pca_data[, 1:53], 7)
+
+nba_ids$cluster <- fit$cluster
+
+nba_ids |>
+    group_by(cluster) |>
+    summarise(
+        players = paste(sample(player_name, 5), collapse = ",")
+    )
+```
+
+Let's test some players. We should see three different cluster assignments.
+
+```{r}
+nba_ids |> filter(
+    player_name %in% c(
+        "Victor Wembanyama",
+        "Nikola Jokic",
+        "Clint Capela",
+        "Rudy Gobert'"
+    )
+)
+```
+
+We do! Capela and Gobert's style is similar, but Jokic and Wembanyama are each distinct in their own right. This despite similar heights and weights.
+
+Let's try another. These three all have similar physical profiles, roles, and play styles. Let's see how they are clustered.
+
+```{r}
+nba_ids |> filter(
+    player_name %in% c(
+        "Jimmy Butler",
+        "Jayson Tatum",
+        "Jaylen Brown"
+    )
+)
+```
+
+We see they all fall into the same cluster! This gives some assurance that the clustering is capturing some of the inherent patterns.
+
+What about all players who've historically been labeled "point guards". Each of these play so differently we should see completely different cluster assignments.
+
+```{r}
+nba_ids |> filter(
+    player_name %in% c(
+        "Collin Sexton",
+        "Bruce Brown",
+        "Stephen Curry",
+        "Jose Alvarado"
+    )
+)
+```
+
+We do! This tracks from a contextual lens.
+
+Let's look at at some of the most dissimilar players from a physical profile that have the same cluster.
+
+```{r}
+getMinMax <- function(data, cluster = 1) {
+    data_f <- data[data$cluster == cluster, ]
+    data_f$val <- (scale(data_f$profile_height_in) + scale(data_f$profile_weight_lbs)) / 2
+    data_f <- data_f |> arrange(desc(val))
+
+    return(c(
+        data_f$player_name[nrow(data_f)],
+        data_f$player_name[1]
+    ))
+}
+```
+
+```{r}
+for (c in sort(unique(nba_ids$cluster))) {
+    players <- getMinMax(nba_ids, c)
+    print(paste(
+        c, "- Min:", players[1],
+        "| Max:", players[2]
+    ))
+}
+```
+
+Some of these make a lot of sense! Others would require rethinking positions, roles, styles. But that's the point!
+
+Looks like a lot of this is volume unadjusted
+
+How many assignments by cluster do we have?
+
+```{r}
+nba_ids |> count(cluster)
 ```
