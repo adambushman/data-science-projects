@@ -62,12 +62,12 @@ any(na_summary > 0)
 ```{r}
 nba_numeric <- nba_stats |> select(
     where(is.numeric) &
-    -c(profile_height_in, profile_weight_lbs)
+        -c(profile_height_in, profile_weight_lbs)
 )
 
 nba_ids <- nba_stats |> select(
-    where(is.character) | 
-    c(profile_games_played, profile_minutes, profile_height_in, profile_weight_lbs)
+    where(is.character) |
+        c(profile_games_played, profile_minutes, profile_height_in, profile_weight_lbs)
 )
 ```
 
@@ -85,9 +85,9 @@ Create volume adjusted measures based on minutes (i.e. points per "36 minutes", 
 ```{r}
 nba_adjusted <- nba_numeric |>
     mutate(across(
-        where(is.integer) & -c(profile_games_played, profile_minutes), 
+        where(is.integer) & -c(profile_games_played, profile_minutes),
         ~ . * 36.0 / profile_minutes
-    )) |> 
+    )) |>
     select(-c(profile_games_played, profile_minutes))
 ```
 
@@ -237,9 +237,12 @@ The same algorithms with the first 57 principal components indicate somewhere ar
 set.seed(2015)
 fit <- kmeans(nba_pca_data[, 1:57], 10)
 
-nba_ids$cluster <- fit$cluster
+nba_ids$cluster <- factor(fit$cluster)
+nba_scaled$cluster <- factor(fit$cluster)
 
-nba_ids |> count(cluster) |> mutate(prop = n / sum(n))
+nba_ids |>
+    count(cluster) |>
+    mutate(prop = n / sum(n))
 ```
 
 The initial results seem fairly reasonable. Understandably, some clusters (or as we would interpret, "positions"/"roles"/"styles") have more players than others given the nature of the game.
@@ -322,27 +325,131 @@ Generally speaking, these make a lot of sense. The next step would be to analyze
 
 ### Cluster Naming
 
-We're going to let AI suggest some initial names. We'll then comb through the data surrounding the clusters and make our own minds up.
+Clusters are labeled arbitrarily. There's nothing intuitive by labels `1`, `2`, etc. We need to give these clusters meaning by assigning `1` a descriptive label.
 
-We'll use the following prompt (along with the list of names) and 5 suggestions from OpenAI's ChatGPT 4o model:
+We'll do that two ways:
+
+1.  We'll create a penalized logistic regression model for each individual cluster and select the highest absolute value of the coefficients. In this way, we can understand some of the predictors that define the cluster.
+
+2.  We'll leverage AI to use what it knows about the players in each cluster to give label suggestions.
+
+We'll pool these perspectives together to generate our own label. We'll save the label in the following table
+
+```{r}
+cluster_labels <- tibble(
+    cluster = factor(1:10),
+    label = as.character(NA)
+)
+```
+
+#### Top Features Model
+
+Here's the function that will ingest our dataset, classifify against a binary target (`1` = cluster of interest, `0` = all other clusters).
+
+We'll perform cross validation, take the best model, fit on the entire data set, and take the top coefficients.
+
+```{r}
+get_elasnet_top_features <- function(data) {
+    # Configure recipe
+    mod_rec <- recipe(target ~ ., data)
+
+    # Setup cross-validation folds
+    mod_cv <- rsample::vfold_cv(data, v = 5)
+
+    # Configure tuning grid
+    mod_tune_grid <- grid_regular(
+        penalty(),
+        mixture(),
+        levels = 4
+    )
+
+    # Setup model definition
+    mod_def <- logistic_reg(
+        mixture = tune(),
+        penalty = tune()
+    ) |>
+        set_engine("glmnet")
+
+    # Configure workflow
+    mod_wflw <-
+        workflow() |>
+        add_model(mod_def) |>
+        add_recipe(mod_rec)
+
+    # Define parallelization
+    cores_target <- ceiling(parallel::detectCores() * 0.75)
+    doParallel::registerDoParallel(cores = cores_target)
+
+    # Run cross-validated tuning
+    set.seed(814)
+    mod_tune <-
+        mod_wflw |>
+        tune_grid(
+            resamples = mod_cv,
+            grid = mod_tune_grid,
+            metrics = metric_set(roc_auc)
+        )
+
+    # Select & fit best model
+    best_mod <- mod_tune |> select_best(metric = "roc_auc")
+    final_wflw <- mod_wflw |> finalize_workflow(best_mod)
+    final_fit <- fit(final_wflw, data = data)
+
+    # Capture the top predictors by absolute value of coefficient
+    tidy(final_fit) |>
+        arrange(desc(abs(estimate))) |>
+        slice_head(n = 10) |>
+        select(-penalty) |>
+        print()
+}
+```
+
+We'll call this for each cluster.
+
+
+#### Aritificial Intelligence
+
+We're going to let AI suggest some labels. All it will see is 1) our prompt and 2) the player names pertaining to the cluster. This will lead to a less biased approach
+
+This is the prompt we'll use (along with the list of names) against OpenAI's ChatGPT 4o model:
 
 >   Below are a list of recent NBA player names. Assume these players belong in a collective group based on their play style and role. Generate 5 unique suggestions for a group label that is short and sweet but descriptive of the group. Restrict evaluation to style and role; avoid analysis rooted in reputation, playing time, etc.
+
 
 #### Cluster #1
 
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 1,]$profile_name
+nba_ids[nba_ids$cluster == "1", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "1", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Playmaking Hustlers
 *   Versatile Initiators
 *   Dynamic Facilitators
 *   Crafty Drivers
 *   Hybrid Creators
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "1", 2] <- ""
+```
 
 ---
 
@@ -351,16 +458,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 2,]$profile_name
+nba_ids[nba_ids$cluster == "2", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "2", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Versatile Wings
 *   Dynamic Bigs
 *   Stretch Forwards
 *   Two-Way Frontcourt
 *   Hybrid Playmakers
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "2", 2] <- ""
+```
 
 ---
 
@@ -369,16 +495,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 3,]$profile_name
+nba_ids[nba_ids$cluster == "3", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "3", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Scoring Wings
 *   Perimeter Playmakers
 *   Versatile Shooters
 *   Dynamic Swingmen
 *   Offensive Engines
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "3", 2] <- ""
+```
 
 ---
 
@@ -387,16 +532,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 4,]$profile_name
+nba_ids[nba_ids$cluster == "4", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "4", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Elite Creators
 *   Dynamic Scorers
 *   Playmaking Stars
 *   Offensive Leaders
 *   All-Around Playmakers
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "4", 2] <- ""
+```
 
 ---
 
@@ -405,16 +569,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 5,]$profile_name
+nba_ids[nba_ids$cluster == "5", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "5", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Rim Protectors
 *   Paint Enforcers
 *   Dynamic Bigs
 *   Post Specialists
 *   Interior Anchors
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "5", 2] <- ""
+```
 
 ---
 
@@ -423,16 +606,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 6,]$profile_name
+nba_ids[nba_ids$cluster == "6", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "6", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Floor Generals
 *   Playmaking Guards
 *   Perimeter Orchestrators
 *   Dynamic Ball Handlers
 *   Backcourt Catalysts
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "6", 2] <- ""
+```
 
 ---
 
@@ -441,16 +643,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 7,]$profile_name
+nba_ids[nba_ids$cluster == "7", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "7", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Two-Way Wings
 *   Defensive Specialists
 *   Versatile Role Players
 *   Perimeter Stoppers
 *   Glue Guys
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "7", 2] <- ""
+```
 
 ---
 
@@ -459,16 +680,35 @@ Generated label suggestions:
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 8,]$profile_name
+nba_ids[nba_ids$cluster == "8", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "8", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Catch-and-Shoot Crew
 *   Perimeter Marksmen
 *   Wing Snipers
 *   Spot-Up Specialists
 *   Floor Spacers
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "8", 2] <- ""
+```
 
 Offense: *Perimeter Finishers*
 
@@ -479,10 +719,22 @@ Offense: *Perimeter Finishers*
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 9,]$profile_name
+nba_ids[nba_ids$cluster == "9", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "9", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Rim Protectors
 *   Paint Guardians
@@ -492,6 +744,13 @@ Generated label suggestions:
 
 Offense: *Interior Finishers*
 
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "9", 2] <- ""
+```
+
 ---
 
 #### Cluster #10
@@ -499,13 +758,32 @@ Offense: *Interior Finishers*
 Player names:
 
 ```{r}
-nba_ids[nba_ids$cluster == 10,]$profile_name
+nba_ids[nba_ids$cluster == "10", ]$profile_name
 ```
 
-Generated label suggestions:
+Let's pull the top features explaining this cluster assignment:
+
+```{r}
+target_cluster_df <- nba_scaled |>
+    mutate(target = factor(ifelse(cluster == "10", 1, 0))) |>
+    select(-cluster)
+
+get_elasnet_top_features(target_cluster_df)
+```
+
+*Explain the top features...*
+
+ChatGPT generated the following label suggestions:
 
 *   Skilled Bigs
 *   Versatile Frontcourt
 *   Playmaking Centers
 *   Dominant Big Men
 *   All-Around Bigs
+
+*Decide what to label the cluster...*
+
+```{r}
+# Save cluster label
+cluster_labels[cluster_labels$cluster == "10", 2] <- ""
+```
