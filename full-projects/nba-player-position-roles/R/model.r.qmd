@@ -60,8 +60,15 @@ any(na_summary > 0)
 ### Scale Variables
 
 ```{r}
-nba_numeric <- nba_stats |> select(where(is.numeric))
-nba_ids <- nba_stats |> select(where(is.character) | c(profile_height_in, profile_weight_lbs))
+nba_numeric <- nba_stats |> select(
+    where(is.numeric) &
+    -c(profile_height_in, profile_weight_lbs)
+)
+
+nba_ids <- nba_stats |> select(
+    where(is.character) | 
+    c(profile_games_played, profile_minutes, profile_height_in, profile_weight_lbs)
+)
 ```
 
 ```{r}
@@ -73,10 +80,23 @@ nonf_summary <- sapply(nba_numeric, function(col) {
 any(nonf_summary > 0)
 ```
 
+Create volume adjusted measures based on minutes (i.e. points per "36 minutes", an industry standard).
+
+```{r}
+nba_adjusted <- nba_numeric |>
+    mutate(across(
+        where(is.integer) & -c(profile_games_played, profile_minutes), 
+        ~ . * 36.0 / profile_minutes
+    )) |> 
+    select(-c(profile_games_played, profile_minutes))
+```
+
+We also remove the total volume measures as we want to prevent clusters that are similar just based on how much they play.
+
 Scale the numeric variables:
 
 ```{r}
-nba_scaled <- scale(nba_numeric)
+nba_scaled <- scale(nba_adjusted)
 ```
 
 ### Principal Component Analysis
@@ -95,7 +115,7 @@ nba_pca <- princomp(nba_scaled)
 summary(nba_pca)
 ```
 
-We have 199 numeric, source variables so 199 principal components. The first 12 components explain 75% of variance. The first 36 explain 90% of the variance. The first 53 principal components explain 95%. That's just 1/4 of our original number of features explaining nearly all of the total variance. 
+We have 195 numeric, source variables so 199 principal components. The first 15 components explain 75% of variance, the first 40 explain 90% of the variance and the first 57 principal components explain 95%. That means just over 1/4 of our original number of features explain nearly all of the total variance. 
 
 PCA did a good job at 1) reducing dimensionality and 2) eliminating any colinearity of features. 
 
@@ -189,16 +209,16 @@ clustering_grid_01 |>
     facet_wrap(~name, ncol = 1, scales = "free")
 ```
 
+`hclust` gives the impression that around 10 is the right number of clusters, though the elbow is difficult to identify. `kmeans` suggests 9 or 10.
 
-
-Using kmeans clustering, looks like the elbow point right around 8. Let's see if we get different results using just the first 53 principal components. 
+Let's see if we get different results using just the first 53 principal components. 
 
 ```{r}
 clustering_grid_02 <-
     clustering_grid |>
     mutate(
-        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_pca_data[, 1:53])),
-        hclust = map(clusters, ~ cluster_hclust(.x, nba_pca_data[, 1:53]))
+        kmeans = map(clusters, ~ cluster_kmeans(.x, nba_pca_data[, 1:57])),
+        hclust = map(clusters, ~ cluster_hclust(.x, nba_pca_data[, 1:57]))
     )
 ```
 
@@ -211,33 +231,24 @@ clustering_grid_02 |>
     facet_wrap(~name, ncol = 1, scales = "free")
 ```
 
-This approach indicates an elbow right around 7 clusters.
-
-
-```{r}
-# install.packages("fpc")
-# library(fpc)
-
-cl <- dbscan(nba_pca_data[, 1:53], eps = 12, MinPts = 100)
-
-summary(cl)
-```
-
+The same algorithms with the first 57 principal components indicate somewhere around 9 to 10. Let's proceed with the PCA results and assume clusters of `10`. I also think the smoothing of `kmeans` is a little nicer so let's default to that algorithm.
 
 ```{r}
-set.seed(814)
-fit <- kmeans(nba_pca_data[, 1:53], 7)
+set.seed(2015)
+fit <- kmeans(nba_pca_data[, 1:57], 10)
 
 nba_ids$cluster <- fit$cluster
 
-nba_ids |>
-    group_by(cluster) |>
-    summarise(
-        players = paste(sample(profile_name, 5), collapse = ",")
-    )
+nba_ids |> count(cluster) |> mutate(prop = n / sum(n))
 ```
 
-Let's test some players. We should see three different cluster assignments.
+The initial results seem fairly reasonable. Understandably, some clusters (or as we would interpret, "positions"/"roles"/"styles") have more players than others given the nature of the game.
+
+Let's evaluate some specific players and get a sense for the results.
+
+### Cluster Evaluation
+
+The first example deals with 4 players typically thought of as "centers". Their physical profiles are somewhat similar but there are significant differences in style and role. We should probably see three different cluster assignments.
 
 ```{r}
 nba_ids |> filter(
@@ -245,12 +256,12 @@ nba_ids |> filter(
         "Victor Wembanyama",
         "Nikola Jokic",
         "Clint Capela",
-        "Rudy Gobert'"
+        "Rudy Gobert"
     )
 )
 ```
 
-We do! Capela and Gobert's style is similar, but Jokic and Wembanyama are each distinct in their own right. This despite similar heights and weights.
+We see Capela and Gobert with the same cluster assignment, making sense, but Jokic and Wembanyama are also assigned to the same. Given their offensive game, this could make sense, as most of their differentiators are on the defensive end.
 
 Let's try another. These three all have similar physical profiles, roles, and play styles. Let's see how they are clustered.
 
@@ -279,7 +290,7 @@ nba_ids |> filter(
 )
 ```
 
-We do! This tracks from a contextual lens.
+All different except for Curry and Sexton. We'll have to dig into the cluster more closely to learn about this. So far its tracking pretty close to what a contextual lens might suggest.
 
 Let's look at at some of the most dissimilar players from a physical profile that have the same cluster.
 
@@ -306,28 +317,195 @@ for (c in sort(unique(nba_ids$cluster))) {
 }
 ```
 
-Some of these make a lot of sense! Others would require rethinking positions, roles, styles. But that's the point!
+Generally speaking, these make a lot of sense. The next step would be to analyze each cluster and come up with unique labels for them that describe the new position/role/style.
 
-Looks like a lot of this is volume unadjusted
 
-How many assignments by cluster do we have?
+### Cluster Naming
+
+We're going to let AI suggest some initial names. We'll then comb through the data surrounding the clusters and make our own minds up.
+
+We'll use the following prompt (along with the list of names) and 5 suggestions from OpenAI's ChatGPT 4o model:
+
+>   Below are a list of recent NBA player names. Assume these players belong in a collective group based on their play style and role. Generate 5 unique suggestions for a group label that is short and sweet but descriptive of the group. Restrict evaluation to style and role; avoid analysis rooted in reputation, playing time, etc.
+
+#### Cluster #1
+
+Player names:
 
 ```{r}
-nba_ids |> count(cluster)
+nba_ids[nba_ids$cluster == 1,]$profile_name
 ```
 
+Generated label suggestions:
+
+*   Playmaking Hustlers
+*   Versatile Initiators
+*   Dynamic Facilitators
+*   Crafty Drivers
+*   Hybrid Creators
+
+---
+
+#### Cluster #2
+
+Player names:
 
 ```{r}
-nba_stats$cluster <- fit$cluster
+nba_ids[nba_ids$cluster == 2,]$profile_name
 ```
+
+Generated label suggestions:
+
+*   Versatile Wings
+*   Dynamic Bigs
+*   Stretch Forwards
+*   Two-Way Frontcourt
+*   Hybrid Playmakers
+
+---
+
+#### Cluster #3
+
+Player names:
 
 ```{r}
-nba_stats |>
-    group_by(cluster) |>
-    summarise(
-        min_min = min(profile_games_played),
-        max_min = max(profile_games_played)
-    )
+nba_ids[nba_ids$cluster == 3,]$profile_name
 ```
 
-Get volume adjusted measures and consider dropping "minutes" and "games_played". 
+Generated label suggestions:
+
+*   Scoring Wings
+*   Perimeter Playmakers
+*   Versatile Shooters
+*   Dynamic Swingmen
+*   Offensive Engines
+
+---
+
+#### Cluster #4
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 4,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Elite Creators
+*   Dynamic Scorers
+*   Playmaking Stars
+*   Offensive Leaders
+*   All-Around Playmakers
+
+---
+
+#### Cluster #5
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 5,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Rim Protectors
+*   Paint Enforcers
+*   Dynamic Bigs
+*   Post Specialists
+*   Interior Anchors
+
+---
+
+#### Cluster #6
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 6,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Floor Generals
+*   Playmaking Guards
+*   Perimeter Orchestrators
+*   Dynamic Ball Handlers
+*   Backcourt Catalysts
+
+---
+
+#### Cluster #7
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 7,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Two-Way Wings
+*   Defensive Specialists
+*   Versatile Role Players
+*   Perimeter Stoppers
+*   Glue Guys
+
+---
+
+#### Cluster #8
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 8,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Catch-and-Shoot Crew
+*   Perimeter Marksmen
+*   Wing Snipers
+*   Spot-Up Specialists
+*   Floor Spacers
+
+Offense: *Perimeter Finishers*
+
+---
+
+#### Cluster #9
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 9,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Rim Protectors
+*   Paint Guardians
+*   Defensive Anchors
+*   Rebounding Specialists
+*   Post Defenders
+
+Offense: *Interior Finishers*
+
+---
+
+#### Cluster #10
+
+Player names:
+
+```{r}
+nba_ids[nba_ids$cluster == 10,]$profile_name
+```
+
+Generated label suggestions:
+
+*   Skilled Bigs
+*   Versatile Frontcourt
+*   Playmaking Centers
+*   Dominant Big Men
+*   All-Around Bigs
