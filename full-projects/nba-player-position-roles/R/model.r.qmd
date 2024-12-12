@@ -238,7 +238,8 @@ set.seed(2015)
 fit <- kmeans(nba_pca_data[, 1:57], 10)
 
 nba_ids$cluster <- factor(fit$cluster)
-nba_scaled$cluster <- factor(fit$cluster)
+nba_adjusted_full <- nba_adjusted |> mutate(cluster = factor(fit$cluster))
+nba_scaled_full <- as.data.frame(nba_scaled) |> mutate(cluster = factor(fit$cluster))
 
 nba_ids |>
     count(cluster) |>
@@ -333,14 +334,23 @@ We'll do that two ways:
 
 2.  We'll leverage AI to use what it knows about the players in each cluster to give label suggestions.
 
-We'll pool these perspectives together to generate our own label. We'll save the label in the following table
+We'll pool these perspectives together to generate our own label. We'll save the label in the following table:
 
 ```{r}
 cluster_labels <- tibble(
     cluster = factor(1:10),
-    label = as.character(NA)
+    label = as.character(NA), 
+    abbrev = as.character(NA), 
 )
 ```
+
+
+#### Guidelines
+
+We want to shy away from traditional language: "guard", "forward", "center". Even labels like "backcourt", "frontcourt" can pigeonhole a group of players in unhelpful ways, potentially. Additionally, modern terms like "wing" and "big" we may want to shy away from.
+
+This puts more emphasis on style of play and role than physical profile or position.
+
 
 #### Top Features Model
 
@@ -427,14 +437,14 @@ nba_ids[nba_ids$cluster == "1", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "1", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+These top features are interesting. There's clear evidence of a) athleticism and skill in the open court, b) some tendency toward mistakes, and 3) overall sub-impact.  
 
 ChatGPT generated the following label suggestions:
 
@@ -444,11 +454,12 @@ ChatGPT generated the following label suggestions:
 *   Crafty Drivers
 *   Hybrid Creators
 
-*Decide what to label the cluster...*
+I'm somewhat drawn to words like "initiator" and "hustler". I don't see any evidence of "facilitator" or "creator". There's a good mix of physical profile and style. Let's go with "Versatile Anchor".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "1", 2] <- ""
+cluster_labels[cluster_labels$cluster == "1", 2] <- "Versatile Anchor"
+cluster_labels[cluster_labels$cluster == "1", 3] <- "VA"
 ```
 
 ---
@@ -464,14 +475,14 @@ nba_ids[nba_ids$cluster == "2", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "2", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What first catches me eye with these features are `second_change_at_rim_frequency` and `at_rim_accuracy`. These are players oriented near the basket. Next what catches my eye are some of the `second_change_3` variations but that are negative. As in lower frequency on second chance opportunities but not necessarily lower on overall 3s.
 
 ChatGPT generated the following label suggestions:
 
@@ -481,11 +492,12 @@ ChatGPT generated the following label suggestions:
 *   Two-Way Frontcourt
 *   Hybrid Playmakers
 
-*Decide what to label the cluster...*
+In comparing these options to the player list set, I'm drawn to the "Hybrid Playmakers" label. It's not very descriptive. We have again, a good mix of physical profile and style. Therefore, let's settle on "Versatile Finisher".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "2", 2] <- ""
+cluster_labels[cluster_labels$cluster == "2", 2] <- "Versatile Finisher"
+cluster_labels[cluster_labels$cluster == "2", 3] <- "VF"
 ```
 
 ---
@@ -501,14 +513,14 @@ nba_ids[nba_ids$cluster == "3", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "3", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What catches my eye are lower on assist features than other groups but higher rebounders and some hustle stuff here. 
 
 ChatGPT generated the following label suggestions:
 
@@ -518,11 +530,12 @@ ChatGPT generated the following label suggestions:
 *   Dynamic Swingmen
 *   Offensive Engines
 
-*Decide what to label the cluster...*
+I see all of these words in this group to some extent. The combo that most seems interesting is probably "versatile" and "engine", so we'll go with "Versatile Engine".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "3", 2] <- ""
+cluster_labels[cluster_labels$cluster == "3", 2] <- "Versatile Engine"
+cluster_labels[cluster_labels$cluster == "3", 3] <- "VE"
 ```
 
 ---
@@ -538,14 +551,14 @@ nba_ids[nba_ids$cluster == "4", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "4", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+This group is pretty clear. Scoring, creating, playmaking.
 
 ChatGPT generated the following label suggestions:
 
@@ -555,11 +568,12 @@ ChatGPT generated the following label suggestions:
 *   Offensive Leaders
 *   All-Around Playmakers
 
-*Decide what to label the cluster...*
+To borrow a word from a previous cluster, I like the word "engine". These are the players that engage the team's "drivetrain", so to speak. Let's go with "Perimeter Engine".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "4", 2] <- ""
+cluster_labels[cluster_labels$cluster == "4", 2] <- "Perimeter Engine"
+cluster_labels[cluster_labels$cluster == "4", 3] <- "PE"
 ```
 
 ---
@@ -575,14 +589,14 @@ nba_ids[nba_ids$cluster == "5", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "5", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What's interesting about this group's features compared to the list of players relates to how much is assisted and the propencity for 3P field goals. 
 
 ChatGPT generated the following label suggestions:
 
@@ -592,11 +606,12 @@ ChatGPT generated the following label suggestions:
 *   Post Specialists
 *   Interior Anchors
 
-*Decide what to label the cluster...*
+"Dynamic Bigs" is the only example I like but we're trying to shy away from physical profiles and stick with style/role. Let's target "Interior Connector".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "5", 2] <- ""
+cluster_labels[cluster_labels$cluster == "5", 2] <- "Interior Connector"
+cluster_labels[cluster_labels$cluster == "5", 3] <- "IC"
 ```
 
 ---
@@ -612,14 +627,14 @@ nba_ids[nba_ids$cluster == "6", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "6", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+These features are interesting. What sticks out? a) their scoring isn't really assisted and 2) there's some unique approach to defense where they draw a lot of fouls.
 
 ChatGPT generated the following label suggestions:
 
@@ -629,11 +644,12 @@ ChatGPT generated the following label suggestions:
 *   Dynamic Ball Handlers
 *   Backcourt Catalysts
 
-*Decide what to label the cluster...*
+Again, we're trying to shy away from traditional terminology. I like "orchestrator" as it eludes more responsibility than just "facilitator". However, it's often used mostly for traditional guard positions. Let's go with "Perimeter Anchor", instead.
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "6", 2] <- ""
+cluster_labels[cluster_labels$cluster == "6", 2] <- "Perimeter Anchor"
+cluster_labels[cluster_labels$cluster == "6", 3] <- "PA"
 ```
 
 ---
@@ -649,14 +665,14 @@ nba_ids[nba_ids$cluster == "7", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "7", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What sticks out is not efficient scorers. But there is some creating, getting to the free-throw line stuff that's interesting.
 
 ChatGPT generated the following label suggestions:
 
@@ -666,11 +682,12 @@ ChatGPT generated the following label suggestions:
 *   Perimeter Stoppers
 *   Glue Guys
 
-*Decide what to label the cluster...*
+There are certainly some good defenders in this list but that's not the primary thing here. "Two-Way" could be good. "Glue" and "connector" are intriguing words. I think the point is they do a bit of everything, but specialize in non-scoring events. Let's go with "Versatile Connector".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "7", 2] <- ""
+cluster_labels[cluster_labels$cluster == "7", 2] <- "Versatile Connector"
+cluster_labels[cluster_labels$cluster == "7", 3] <- "VC"
 ```
 
 ---
@@ -686,14 +703,14 @@ nba_ids[nba_ids$cluster == "8", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "8", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What sticks out is the orientation to perimeter activity, clearly.
 
 ChatGPT generated the following label suggestions:
 
@@ -703,14 +720,13 @@ ChatGPT generated the following label suggestions:
 *   Spot-Up Specialists
 *   Floor Spacers
 
-*Decide what to label the cluster...*
+I think I like "Perimeter Finisher" best. It fits with some of the other language we've used too so it's cohesive.
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "8", 2] <- ""
+cluster_labels[cluster_labels$cluster == "8", 2] <- "Perimeter Finisher"
+cluster_labels[cluster_labels$cluster == "8", 3] <- "PF"
 ```
-
-Offense: *Perimeter Finishers*
 
 ---
 
@@ -723,16 +739,15 @@ nba_ids[nba_ids$cluster == "9", ]$profile_name
 ```
 
 Let's pull the top features explaining this cluster assignment:
-
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "9", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+In the opposite vein to above, this group sticks out for their presence on the interior.
 
 ChatGPT generated the following label suggestions:
 
@@ -742,13 +757,12 @@ ChatGPT generated the following label suggestions:
 *   Rebounding Specialists
 *   Post Defenders
 
-Offense: *Interior Finishers*
-
-*Decide what to label the cluster...*
+Let's go with "Interior Anchor". This helps describe the role on both ends of the floor. If we were just focused on "offense", we would classify as "Interior Finisher".
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "9", 2] <- ""
+cluster_labels[cluster_labels$cluster == "9", 2] <- "Interior Anchor"
+cluster_labels[cluster_labels$cluster == "9", 3] <- "IA"
 ```
 
 ---
@@ -764,14 +778,14 @@ nba_ids[nba_ids$cluster == "10", ]$profile_name
 Let's pull the top features explaining this cluster assignment:
 
 ```{r}
-target_cluster_df <- nba_scaled |>
+target_cluster_df <- nba_scaled_full |>
     mutate(target = factor(ifelse(cluster == "10", 1, 0))) |>
     select(-cluster)
 
 get_elasnet_top_features(target_cluster_df)
 ```
 
-*Explain the top features...*
+What sticks out in this group is 3P shooting with a bunch of rebounding and being in the center of the action. 
 
 ChatGPT generated the following label suggestions:
 
@@ -781,9 +795,119 @@ ChatGPT generated the following label suggestions:
 *   Dominant Big Men
 *   All-Around Bigs
 
-*Decide what to label the cluster...*
+Let's go with "Interior Engine" for the moment. It describes this idea of engaging the team's "drivetrain" from inside-out.
 
 ```{r}
 # Save cluster label
-cluster_labels[cluster_labels$cluster == "10", 2] <- ""
+cluster_labels[cluster_labels$cluster == "10", 2] <- "Interior Engine"
+cluster_labels[cluster_labels$cluster == "10", 3] <- "IE"
 ```
+
+## New Position Labels
+
+### Summary
+
+Here's our final clusters, with labels and abbreviations. We settled on distinguishing orientation of play and style with "interior", "perimeter", and "versatile" descriptors. Obviously this isn'e exclusive, a "perimeter engine" would certainly score and operate on the interior as well, but it describes their tendencies: "out-in" vs "in-out". 
+
+Next we settled on 4 roles or styles: "connector", "anchor", "finisher", and "engine". Again, these aren't exclusive but indicate where players tend and lean in their overall style and assumed roles.
+
+```{r}
+cluster_labels |>
+    arrange(label)
+```
+
+Let's go through some exercises where we intersect these labels with the original data. Now that these labels have meaning, we can benchmark more easily against domain knowledge.
+
+```{r}
+nba_adjusted_full <- nba_adjusted_full |>
+    inner_join(cluster_labels) |>
+    bind_cols(nba_ids)
+```
+
+
+### Player Distributions
+
+How many players across the NBA fall into these groups? We'd expect "Engines" to have the fewest, the "Versatile" group to be the largest sum overall. Let's see if that matches up with preconceptions.
+
+```{r}
+nba_adjusted_full |>
+    group_by(label, abbrev) |>
+    count() |>
+    ungroup() |>
+    mutate(perc = n / sum(n))
+```
+
+Our theories held pretty well. "Engines" are about the smallest of each of their respective groups. The "Versatile" group is the largest of them all. 
+
+### League Distributions
+
+We have labels for the "current" teams. Let's see how many of each of these belong to each team.
+
+**NOTE: data gathered represents only the top 500 players by minutes over the last 4.5 seasons; therefore, some teams will see fewer than others and some players don't actively belong to a team**
+
+```{r}
+nba_adjusted_full |> 
+    group_by(profile_team_abbreviation, abbrev) |>
+    count() |>
+    ungroup() |>
+    arrange(abbrev) |>
+    pivot_wider(
+        names_from = abbrev, 
+        values_from = n, 
+        values_fill = 0
+    ) |>
+    gt::gt()
+```
+
+It's pretty interesting to see different approaches. 
+
+*   Interior
+    -   ORL (Orlando Magic): no Engines or Anchors, but 3 Interior Connectors (Wendell Carter Jr., Goga Bitadze, Jonathan Isaac)
+    -   SAS (San Antonio Spurs): no Anchors or Connectors and only 1 Engine (Victor Wembanyama)
+*   Perimeter
+    -   CLE: 8 players total, 3 of which are Perimeter Finishers (Georges Niang, Max Strus, Sam Merrill)
+    -   DEN: only 2 players (Finisher: Justin Holiday, Engine: Jamal Murray) and no Perimeter Anchors
+*   Versatile
+    -   BOS (Boston Celtics): only 3 players and no Engines or Anchors
+    -   SAS (San Antonio Spurs): a total of 13, 6 of which are Versatile Finishers
+
+### Team Distributions
+
+Let's take a team like Boston and see which of our new position labels are getting minutes. Let's workup a quick function for that:
+
+```{r}
+peek_team_dist <- function(team) {
+    nba_adjusted_full |>
+        filter(profile_team_abbreviation == team) |>
+        mutate(mp_gm = profile_minutes / profile_games_played) |>
+        arrange(desc(mp_gm)) |>
+        select(profile_name, label, abbrev, mp_gm) |>
+        gt::gt()
+}
+```
+
+```{r}
+peek_team_dist("BOS")
+```
+
+Really interesting. Boston is led by their Engines, then Anchors, and then some Connectors.
+
+Let's try another team, say the Portland Trailblazers:
+
+```{r}
+peek_team_dist("POR")
+```
+
+Here we see some differences, with Connectors featured a little more towards the top wich a lot of Versatile type players as opposed to Perimeter or Interior focused.
+
+### Next Steps
+
+There are **many** avenues to take this analysis. We could analze team performance, understand career earnings through the lens of these more advanced position labels, and much more.
+
+Where we are going to take the analysis is in the direction of NBA prospects. Can we create a model to predict the position a player not yet in the NBA may align with were he to get there?
+
+This next phase requires:
+
+1.  Pre-NBA measures of performance for this group we have positions for
+2.  Develop a model with Pre-NBA measures as predictors and new roles as the target
+3.  Use the model to predict which prospects assume which roles at the next level
