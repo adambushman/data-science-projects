@@ -1,8 +1,8 @@
 ---
-title: "Position/role classification of incoming NBA prospects"
-description: "Leveraging multiple machine learning methods in R to cluster for player positions/roles and predict the same for incoming NBA prospects."
+title: "Redefining NBA positions and classifying incoming NBA prospects"
+description: "Leveraging multiple machine learning methods in R to derive new NBA positions based on player roles/syles and using such to classify incoming NBA prospects."
 author: "Adam Bushman"
-date: "12/12/2024"
+date: "12/15/2024"
 format: 
     html:
         toc: true
@@ -15,21 +15,77 @@ execute:
 ---
 
 
-# Assignment Workflow
+## Prompts
 
-## Organizational Theory
+### Prompt #1
+
+>   Which machine learning methods did you implement?
+
+I chose to implement the following machine learning methods in my final project:
+
+1.  Principal Component Analysis (PCA)
+2.  KMeans Clustering
+3.  Hierarchical Clustering
+4.  Elastic Net Logistic Regression
+5.  Neural Network
+6.  Boosted Trees
+
+
+### Prompt #2
+
+>   Discuss the key contribution of each method to your analysis. If a method didn't contribute, discuss why it didn't. A sentence or two for each method is plenty.
+
+1.  Principal Component Analysis (PCA): 
+    Used for the purpose of more performant clustering. Reduced dimensionality of source data from 195 features to 57 principal components while retaining 95% of overall variance.
+
+2.  KMeans Clustering: 
+    Used for the purpose of determing the proper number of clusters. Used the "within cluster sum of squares" measure to evaluate a range of cluster numbers, finding the optimal number via plotting for the elbow point. This was the method used for cluster assignments.
+
+3.  Hierarchical Clustering: 
+    Used for the purpose of validating the proper number of clusters. Used the "within cluster sum of squared error" measure to evaluate a range of cluster nujmbers, finding the optimal number via elbow point.
+
+4.  Elastic Net Logistic Regression: 
+    Used for the purpose of exploring top features that explain the unique characteristics of each cluster. Through these insights, I derived meaningful cluster labels. Tuned `lambda` and `alpha` (`mixture`) hyperparameters via cross-validation and minimized the performance metric *Root Mean Squared Error*.
+
+5.  Neural Network: 
+    Used for the purpose of predicting cluster labels for test data. Tuned `penalty`, `hidden_units`, and `epochs` hyperparameters for maximizing performance metric *AUC* on training data. Chosen as final model for prediction.
+
+6.  Boosted Trees: 
+    Used for the purpose of validating performance results of Neural Network model. Tuned `mtry`, `trees`, `tree_depth`, and `learn_rate` hyperparameters for maximizing performance metric *AUC* on training data. 
+
+
+### Prompt #3
+
+>   Did all methods support your conclusions or did some provide conflicting results? If so they provided conflicting results, how did you reconcile the differences?
+
+*   Clustering:
+    -   KMeans and Hierarchical clustering were both employed to validate results.
+    -   Both gave similar results, but KMeans proved more consistent.
+    -   Hierarchical clustering via `mclust` saw a far more jagged and harder to read elbow point; in some instances, there were large portions of the line with marginal reductions in "WSSE" for each additional cluster.
+    -   KMeans had a nice and smooth, far easier to spot elbow point. With hierarchical clustering confirming KMeans was reasonable, chose to use this appraoch for assigning clusters.
+
+*   Final Prediction Models:
+    -   Neural Network and XGBoost were both very performant, producing *AUC* values exceeding `0.81`. 
+    -   Neural Network fit across the cross-validated tuning grid **MUCH** faster than XGBoost, which was surprising.
+    -   Did not observe any further conflicting results.
+
+
+## Assignment Workflow
 
 ## Data Prep
 
 ### Load Libraries & Data Set
 
-```{r}
-library("tidyverse")
-library("tidymodels")
-library("tidyclust")
-library("dataPreparation")
+We'll use the following libraries and their dependencies
 
-library("kernlab") # Weighted kernal k-means
+```{r}
+library("tidyverse")            # Used for general data manipulation and visualization
+library("tidymodels")           # Used for its modeling framework
+library("tidyclust")            # Used for clustering approaches
+library("dataPreparation")      # Used for scaling, where needed
+library("kernlab")              # Weighted kernal k-means
+library("FactoMineR")           # Used for PCA
+library('VIM')                  # Used for training data imputation
 ```
 
 ```{r}
@@ -37,15 +93,21 @@ library("kernlab") # Weighted kernal k-means
 setwd("full-projects/nba-player-position-roles/R")
 ```
 
-Import the data
+Let's import the source data:
 
 ```{r}
 nba_stats <- read.csv("../nba-player-data.csv")
 ```
 
+The source data is comprized of ~200 features relating to the top 500 NBA players in minutes played over the past 5 seasons. The measures encompass offensive and defensive activity, including shooting, passing, rebounding, etc. We can review the measures below:
+
 ```{r}
 glimpse(nba_stats)
 ```
+
+### Data Quality
+
+Let's see if we have any missing or empty values we need to worry about:
 
 ```{r}
 # Check for missing or empty values
@@ -56,8 +118,12 @@ na_summary <- sapply(nba_stats, function(col) {
 any(na_summary > 0)
 ```
 
+No, all columns and rows feature complete observations.
+
 
 ### Scale Variables
+
+We're going to implement scaling of the variables in order to properly apply the PCA algorithm. First, we'll separate the numberic and ID features from the data.
 
 ```{r}
 nba_numeric <- nba_stats |> select(
@@ -71,16 +137,7 @@ nba_ids <- nba_stats |> select(
 )
 ```
 
-```{r}
-# Check for non-finite values
-nonf_summary <- sapply(nba_numeric, function(col) {
-    sum(!is.finite(col), na.rm = TRUE)
-})
-
-any(nonf_summary > 0)
-```
-
-Create volume adjusted measures based on minutes (i.e. points per "36 minutes", an industry standard).
+In order to avoid sensitivity to volume (i.e. one player playing more than another), we need to create volume adjusted measures based on minutes (i.e. points per "36 minutes", an industry standard). We'll do this for all integer columns (so as to preserve the integrity of "rate" statistics, like "three-point percentage"). We'll then drop the games and minutes features:
 
 ```{r}
 nba_adjusted <- nba_numeric |>
@@ -91,21 +148,16 @@ nba_adjusted <- nba_numeric |>
     select(-c(profile_games_played, profile_minutes))
 ```
 
-We also remove the total volume measures as we want to prevent clusters that are similar just based on how much they play.
-
-Scale the numeric variables:
+And finally, we scale the numeric variables:
 
 ```{r}
 nba_scaled <- scale(nba_adjusted)
 ```
 
+
 ### Principal Component Analysis
 
 Using the scaled variables, let's perform PCA. We'll try to cluster with and without PCA. We'll have both data set versions at our disposal for clustering.
-
-```{r}
-library("FactoMineR")
-```
 
 ```{r}
 nba_pca <- princomp(nba_scaled)
@@ -115,7 +167,7 @@ nba_pca <- princomp(nba_scaled)
 summary(nba_pca)
 ```
 
-We have 195 numeric, source variables so 199 principal components. The first 15 components explain 75% of variance, the first 40 explain 90% of the variance and the first 57 principal components explain 95%. That means just over 1/4 of our original number of features explain nearly all of the total variance. 
+We have 195 numeric source variables so 195 principal components. The first 15 components explain 75% of variance, the first 40 explain 90% of the variance and the first 57 principal components explain 95%. That means just over 1/4 of our original number of features explain nearly all of the total variance. 
 
 PCA did a good job at 1) reducing dimensionality and 2) eliminating any colinearity of features. 
 
@@ -125,7 +177,7 @@ Let's save our results:
 nba_pca_data <- as.data.frame(nba_pca$scores)
 ```
 
-Let's visualize some of these principal components:
+Let's visualize the first two principal components:
 
 ```{r}
 ggplot(
@@ -902,12 +954,291 @@ Here we see some differences, with Connectors featured a little more towards the
 
 ### Next Steps
 
-There are **many** avenues to take this analysis. We could analze team performance, understand career earnings through the lens of these more advanced position labels, and much more.
+There are **many** avenues to take this analysis. We could analyze impact of each position on winning, understand career earnings through the lens of these new positions, and much more.
 
-Where we are going to take the analysis is in the direction of NBA prospects. Can we create a model to predict the position a player not yet in the NBA may align with were he to get there?
+Where we are going to take the analysis is in the direction of understanding the style and role of incoming NBA prospects. One of the toughest parts of scouting the next wave of talent is judging how their game translates to the professional level. 
+
+>   How do the first round talents in the upcoming 2025 NBA draft project across our new positions?
 
 This next phase requires:
 
-1.  Pre-NBA measures of performance for this group we have positions for
-2.  Develop a model with Pre-NBA measures as predictors and new roles as the target
-3.  Use the model to predict which prospects assume which roles at the next level
+*   Pre-NBA measures for as many players from our cluster assigned data set as possible
+    -   This will be our "training" set; we'll intersect pre-NBA stats with the derived positions so far
+    -   *NOTE*: some players lack sufficient pre-NBA data due to coming directly from high school or playing internationally. These data sets are spotty and hard to access. For our purposes, we'll concentrate on players who played in the NCAA (collegiate basketball league in the United States) prior to being drafted in the NBA. This ensures we have consistent data for modeling the relationship of pre-NBA performance and eventual NBA positions. It helps that roughly 80% of our original player list will be featured in the training set.
+
+*   Active collegiate player measures
+    -   We'll also want a "testing" set that features currently active collegiate players who have yet to play in the NBA. We'll use the first round projections from [No Ceilings](https://www.noceilingsnba.com/p/2025-nba-draft-big-board-v2)
+    -   For reasons explained previously, we won't collect measures for any international prospects ranked by No Ceilings (these are just 4 of the 30 first round prospects projected by No Ceilings)
+
+
+## Projecting Incoming Prospects
+
+### Data Prep
+
+We'll first load our "training" data (collegiate data for active NBA players) and intersect with the new positions:
+
+```{r}
+mbb_data_raw <- read.csv('../bballrefstats/college-players.csv')
+```
+
+```{r}
+mbb_data_pos <- mbb_data_raw |>
+    inner_join(
+        nba_adjusted_full |> select(profile_name, cluster_label = label, cluster_abbrev = abbrev), 
+        by = join_by(player_name == profile_name)
+    )
+```
+
+We've got some NAs in our data:
+
+```{r}
+# Check for missing or empty values
+mbb_na <- sapply(mbb_data_pos, function(col) {
+    sum(is.na(col) | is.null(col) | col == "", na.rm = TRUE)
+})
+
+names(which(mbb_na > 0))
+```
+
+We do have some missing values. Why is that? There's two primary reasons:
+
+1.  Calculation limiation: three-point percentage requires 3P attempts. Where there are none, there is no possible value.
+2.  Era limitations: not all measures throughout basketball history have been available due to tracking technology evlolving over time. 
+
+How do we resolve?
+
+Well for #1, we'll impute as zero. Since we account for volume via another measure (`3PA`), this shouldn't be an issue. 
+
+```{r}
+mbb_fillna_1 <- mbb_data_pos |>
+    mutate(col_3pp = ifelse(is.na(col_3pp), 0, col_3pp))
+```
+
+For the situation in #2, all players will have a value at least zero or greater. While not "captured" at the point in time, had the technology been there the values would be represented. Therefore, by imputing the values, we stick with best practice of determing what the values would have been. Let's do some kNN imputation!
+
+```{r}
+mbb_imputed <- kNN(
+    mbb_fillna_1, 
+    variable = setdiff(names(which(mbb_na > 0)), "col_3pp"), 
+    k = 5
+) |>
+    select(!contains("_imp"))
+```
+
+And let's confirm we have fully complete data:
+
+```{r}
+# Check for missing or empty values
+mbb_na_2 <- sapply(mbb_imputed, function(col) {
+    sum(is.na(col) | is.null(col) | col == "", na.rm = TRUE)
+})
+
+any(mbb_na_2 > 0)
+```
+
+And now, our training data is fully cleaned up! Let's bring in our testing data, or the "incoming prospects".
+
+```{r}
+mbb_prospects <- read.csv('../bballrefstats/incoming-prospects.csv')
+```
+
+```{r}
+# Check for missing or empty values
+any(sapply(mbb_prospects, function(col) {
+    sum(is.na(col) | is.null(col) | col == "", na.rm = TRUE)
+}) > 0)
+```
+
+Perfect! And now, let's just check to confirm we have similar columns:
+
+```{r}
+setdiff(names(mbb_prospects), names(mbb_imputed))
+```
+
+The only column in our testing data that isn't in training is `draft_projection`, which is a context only field. Let's prep the models!
+
+
+### Modeling Prep
+
+With our prepped data, we're ready to start defining the models and cross validation infastructure needed. We'll use two models: linear regression and a boosted trees approach (XGBoost). 
+
+We can evaluate feature importance with both but in different ways. They also are different approaches, the former being in the ordinary least squares family while the latter is tree-based. In this way, we can validate results.
+
+#### Model Definition
+
+```{r}
+mod_nn <- mlp(
+    hidden_units = tune(), 
+    penalty = tune(), 
+    epochs = tune()
+) |>
+    set_engine("nnet") |>
+    set_mode("classification")
+
+mod_xg <- boost_tree(
+    mtry = tune(), 
+    trees = tune(), 
+    tree_depth = tune(), 
+    learn_rate = tune()
+) |>
+    set_engine("xgboost") |>
+    set_mode("classification")
+```
+
+#### Cross Validation
+
+With cross validation, we'll be able to confirm that the performance results we're getting from the model aren't due to chance. We'll setup a 5 fold cross validation.
+
+```{r}
+mod_cv <- rsample::vfold_cv(mbb_imputed, v = 5)
+```
+
+We aren't splitting into training and testing since we're only concerned with making inference about the relationships. V fold cross validation will set up training and testing splits for us so those results will all us to test on untrained data anyway.
+
+#### Recipe
+
+Our recipe is fairly straight forward but we will put some extra preprocessing steps in there. In short, we want to predict `team_net_rating` using all of the positional labels.
+
+```{r}
+mod_recipe <- recipe(cluster_label ~ ., mbb_imputed) |>
+    update_role(player_name, cluster_abbrev, new_role = "id") |>
+    step_dummy(school_conf) |>
+    step_normalize(is.numeric) |>
+    step_pca(is.numeric)
+```
+
+
+#### Hyperparameters
+
+```{r}
+mod_nn_grid <- grid_regular(
+    hidden_units(), 
+    penalty(), 
+    epochs(), 
+    levels = 4
+)
+
+mod_xg_grid <- grid_regular(
+    trees(), 
+    tree_depth(), 
+    learn_rate(), 
+    mtry(c(1, ceiling(sqrt(30)))), 
+    levels = 4
+)
+```
+
+### Fitting the Models
+
+Parallelization:
+
+```{r}
+# Define parallelization
+cores_target <- ceiling(parallel::detectCores() * 0.75)
+doParallel::registerDoParallel(cores = cores_target)
+
+set.seed(814)
+```
+
+#### Boosted Trees
+
+```{r}
+# Configure workflow
+mod_wflw_xg <-
+    workflow() |>
+    add_model(mod_xg) |>
+    add_recipe(mod_recipe)
+
+# Run cross-validated tuning
+set.seed(814)
+mod_tune_xg <-
+    mod_wflw_xg |>
+    tune_grid(
+        resamples = mod_cv,
+        grid = mod_xg_grid,
+        metrics = metric_set(roc_auc)
+    )
+```
+
+
+#### Neural Network
+
+Now let's tune the hyperparameters on the neural network using cross-validation. Just as before, we'll setup a workflow with the model and recipe, then tune against the neural network grid we setup previously.
+
+```{r}
+# Configure workflow
+mod_wflw_nn <-
+    workflow() |>
+    add_model(mod_nn) |>
+    add_recipe(mod_recipe)
+
+# Run cross-validated tuning
+mod_tune_nn <-
+    mod_wflw_nn |>
+    tune_grid(
+        resamples = mod_cv,
+        grid = mod_nn_grid,
+        metrics = metric_set(roc_auc)
+    )
+```
+
+
+
+### Comparing the Models
+
+With both of those tuned, let's compare the top 5 configurations for each model:
+
+```{r}
+mod_tune_xg |> collect_metrics() |> slice_max(mean, n = 5)
+```
+
+The XGBoost model is producing "AUC" values of right around 0.81. We tuned 4 hyperparameters, and we see some common themes: `mtry` of 1 or 2, `tree_depth` of 5, and `learn_rate` of 0.1e^-6. That's a pretty performant model. Let's plot all values:
+
+```{r}
+mod_tune_nn |> collect_metrics() |> slice_max(mean, n = 5)
+```
+
+The Neural Network model is producing "AUC" values of around 0.85. We tuned 3 hyperparameters. The only real common theme is a `penalty` of 1. We're also seeing about half the `std_err` as we had with XGBoost. Additionally, the time to fit the model was quite a big lower with Neural Network.
+
+By exploring both of these methods with extensive cross-validation and hyperparameter tuning, we've done extensive validation of our results.
+
+Let's proceed with its best configuration for predicting on the new prospects. Let's make the final fit with these hyperparameters and all of the training data:
+
+```{r}
+# Select & fit best model
+best_mod_nn <- mod_tune_nn |> select_best(metric = "roc_auc")
+final_wflw_nn <- mod_wflw_nn |> finalize_workflow(best_mod_nn)
+final_fit_nn <- fit(final_wflw_nn, data = mbb_imputed)
+```
+
+
+### Predict for Prospects
+
+Let's now:
+
+```{r}
+mbb_predictions <- predict(
+    final_fit_nn, 
+    mbb_prospects |> select(-draft_projection) |> mutate(cluster_abbrev = "X")
+)
+```
+
+And here we have our predictions w/ prospects:
+
+```{r}
+classified_prospects <- 
+    mbb_prospects |>
+    mutate(cluster_label = mbb_predictions$.pred_class) |>
+    select(draft_projection, player_name, cluster_label)
+
+classified_prospects
+```
+
+Let's take a peak at the distribution:
+
+```{r}
+classified_prospects |>
+    count(cluster_label) |>
+    arrange(desc(n))
+```
+
+This first round features a lot of Perimeter Finishers and Versatile Connectors (8 prospects each). This would be extremely helpful information as teams look to prioritize prospects during the scouting season and into the draft process of scheduling workouts, interviews, and ultimately selecting a prospect.
