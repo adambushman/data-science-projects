@@ -1,5 +1,5 @@
 ---
-title: "Redefining NBA positions and classifying incoming NBA prospects"
+title: "Redefining NBA positions and classifying those for incoming prospects"
 description: "Leveraging multiple machine learning methods in R to derive new NBA positions based on player roles/syles and using such to classify incoming NBA prospects."
 author: "Adam Bushman"
 date: "12/15/2024"
@@ -438,10 +438,6 @@ get_elasnet_top_features <- function(data) {
         add_model(mod_def) |>
         add_recipe(mod_rec)
 
-    # Define parallelization
-    cores_target <- ceiling(parallel::detectCores() * 0.75)
-    doParallel::registerDoParallel(cores = cores_target)
-
     # Run cross-validated tuning
     set.seed(814)
     mod_tune <-
@@ -467,6 +463,15 @@ get_elasnet_top_features <- function(data) {
 ```
 
 We'll call this for each cluster.
+
+We'll setup some parallelization for this:
+
+```{r}
+set.seed(729)
+# Define parallelization
+cores_target <- ceiling(parallel::detectCores() * 0.75)
+doParallel::registerDoParallel(cores = cores_target)
+```
 
 
 #### Aritificial Intelligence
@@ -853,6 +858,12 @@ Let's go with "Interior Engine" for the moment. It describes this idea of engagi
 # Save cluster label
 cluster_labels[cluster_labels$cluster == "10", 2] <- "Interior Engine"
 cluster_labels[cluster_labels$cluster == "10", 3] <- "IE"
+```
+
+Now we can stop the parallelization:
+
+```{r}
+doParallel::stopImplicitCluster()
 ```
 
 ## New Position Labels
