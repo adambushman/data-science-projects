@@ -21,7 +21,9 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | Name | Description | Language(s) | Modeling Approach(es) | Links |
 | --- | --- | --- | --- | --- |
 | Home Credit Default Risk | Estimating likelihood of default | `R`, `Python` | Random Forest, SVM, Elastic Net, PCA | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/home-credit-default-risk/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/home-credit-default-risk) |
-| NBA Player Position Roles | Classifing NBA prospects to new positions/roles | `R` | KMeans, PCA, XGBoost | - |
+| NBA Player Position Roles | Redefining NBA positions and classifing those for incoming prospects | `R` | KMeans, PCA, Nueral Network | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/nba-player-position-roles/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/nba-player-position-roles) |
+
+<br>
 
 ### 📈 Regression
 
@@ -35,6 +37,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | Car Prices | Predicting car prices | `R`, `Python`, `Julia` | Linear Regression | [Code](https://github.com/adambushman/data-science-projects/tree/master/regression/car-prices) |
 | Laptop Prices | Predicting laptop pricing | `R` | Decision Tree | [Code]() |
 
+<br>
 
 ### 🎨 Classification
 
@@ -47,6 +50,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | Employee Attrition | Classifying employees to leave and stay at the company | `R` | Decision Tree | - |
 | Breast Cancer | Predicting existance of breast cancer among patients | `Python` | Decision Tree | - |
 
+<br>
 
 ## 🌀 Clustering
 
@@ -54,10 +58,8 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-<br>
 
 <br>
-
 
 ### 🕰️ Time Series
 
@@ -67,6 +69,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | --- | --- | --- | --- | --- |
 | Medicare Perscriptions | Predicting volumes of medicare perscriptions | `R` | ARIMA | [Notebooks](https://adambushman.github.io/data-science-projects/time-series/medicare-perscription-volumes/R/a02_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/time-series/medicare-perscription-volumes/R/model.r.qmd) |
 
+<br>
 
 ### 📕 Natural Language Processing (NLP)
 
@@ -74,10 +77,8 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
-<br>
 
 <br>
-
 
 ### ❓ Other Methods
 
@@ -85,6 +86,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 | --- | --- | --- | --- | --- |
 | Alzheimer's Disease | Reducing dimensionality of alzheimer's predictors | `R` | PCA | [Notebooks](https://adambushman.github.io/data-science-projects/other-methods/dimensionality-reduction/alzheimers-disease/R/a0607_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/other-methods/dimensionality-reduction/alzheimers-disease/R/model.r.qmd) |
 
+<br>
 
 ## Common Resources
 
