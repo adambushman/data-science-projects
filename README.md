@@ -6,7 +6,7 @@ I'm a data enthusiast, finding joy, fulfillment, and personal growth in oscillat
 
 ## Portfolio Purpose
 
-This portfolio showcases my data science projects, highlighting my skills and expertise in extracting insights, solving complex problems, and creating impactful solutions. Through a combination of raw code, rendered notebooks, and documentation, it demonstrates my ability to work across diverse tools and technologies in R, Python, and Julia to ultimately deliver business value. 
+This portfolio showcases my data science projects, highlighting my skills and expertise in extracting insights, solving complex problems, and creating impactful solutions. Through a combination of raw code, rendered notebooks, and documentation, it demonstrates my ability to work across diverse tools and technologies in R, Python, and Julia to ultimately deliver business value.
 
 ![](portfolio-languages.jpg)
 
@@ -20,6 +20,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 
 | Name | Description | Language(s) | Modeling Approach(es) | Links |
 | --- | --- | --- | --- | --- |
+| Delivery Model Standardization for Swire Coca-Cola | Identifying an improved segmentation strategy | `R`, `Python` | Kmeans, Hierarchical, Elastic Net, PCA | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/swire-delivery-standardization/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/swire-delivery-standardization) |
 | Home Credit Default Risk | Estimating likelihood of default | `R`, `Python` | Random Forest, SVM, Elastic Net, PCA | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/home-credit-default-risk/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/home-credit-default-risk) |
 | NBA Player Position Roles | Redefining NBA positions and classifing those for incoming prospects | `R` | KMeans, PCA, Nueral Network | [Notebooks](https://adambushman.github.io/data-science-projects/full-projects/nba-player-position-roles/index.html), [Code](https://github.com/adambushman/data-science-projects/tree/master/full-projects/nba-player-position-roles) |
 
@@ -28,7 +29,7 @@ Each project in this portfolio leverages a unique modeling approach and showcase
 ### 📈 Regression
 
 *Supervised learning projects where the target variable is continuous*
- 
+
 | Name | Description | Language(s) | Modeling Approach | Links |
 | --- | --- | --- | --- | --- |
 | Sacramento Housing | Predicting house prices for value | `R` | Penalized Regression | [Notebooks](https://adambushman.github.io/data-science-projects/regression/sacramento-housing/R/a01_adam-bushman.html), [Code](https://github.com/adambushman/data-science-projects/blob/master/regression/sacramento-housing/R/model.r.qmd) |
