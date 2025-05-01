@@ -79,13 +79,13 @@ I chose to implement the following machine learning methods in my final project:
 We'll use the following libraries and their dependencies
 
 ```{r}
-library("tidyverse")            # Used for general data manipulation and visualization
-library("tidymodels")           # Used for its modeling framework
-library("tidyclust")            # Used for clustering approaches
-library("dataPreparation")      # Used for scaling, where needed
-library("kernlab")              # Weighted kernal k-means
-library("FactoMineR")           # Used for PCA
-library('VIM')                  # Used for training data imputation
+library("tidyverse") # Used for general data manipulation and visualization
+library("tidymodels") # Used for its modeling framework
+library("tidyclust") # Used for clustering approaches
+library("dataPreparation") # Used for scaling, where needed
+library("kernlab") # Weighted kernal k-means
+library("FactoMineR") # Used for PCA
+library("VIM") # Used for training data imputation
 ```
 
 ```{r}
@@ -96,7 +96,7 @@ setwd("full-projects/nba-player-position-roles/R")
 Let's import the source data:
 
 ```{r}
-nba_stats <- read.csv("../nba-player-data.csv")
+nba_stats <- read.csv("nba-player-data.csv")
 ```
 
 The source data is comprized of ~200 features relating to the top 500 NBA players in minutes played over the past 5 seasons. The measures encompass offensive and defensive activity, including shooting, passing, rebounding, etc. We can review the measures below:
@@ -391,8 +391,8 @@ We'll pool these perspectives together to generate our own label. We'll save the
 ```{r}
 cluster_labels <- tibble(
     cluster = factor(1:10),
-    label = as.character(NA), 
-    abbrev = as.character(NA), 
+    label = as.character(NA),
+    abbrev = as.character(NA),
 )
 ```
 
@@ -909,14 +909,14 @@ We have labels for the "current" teams. Let's see how many of each of these belo
 **NOTE: data gathered represents only the top 500 players by minutes over the last 4.5 seasons; therefore, some teams will see fewer than others and some players don't actively belong to a team**
 
 ```{r}
-nba_adjusted_full |> 
+nba_adjusted_full |>
     group_by(profile_team_abbreviation, abbrev) |>
     count() |>
     ungroup() |>
     arrange(abbrev) |>
     pivot_wider(
-        names_from = abbrev, 
-        values_from = n, 
+        names_from = abbrev,
+        values_from = n,
         values_fill = 0
     ) |>
     gt::gt()
@@ -989,13 +989,19 @@ This next phase requires:
 We'll first load our "training" data (collegiate data for active NBA players) and intersect with the new positions:
 
 ```{r}
-mbb_data_raw <- read.csv('../bballrefstats/college-players.csv')
+mbb_data_raw <- read.csv("bballrefstats/college-players.csv")
+```
+
+```{r}
+if (!exists("nba_adjusted_full")) {
+    nba_adjusted_full <- read.csv("nba-player-clustered.csv")
+}
 ```
 
 ```{r}
 mbb_data_pos <- mbb_data_raw |>
     inner_join(
-        nba_adjusted_full |> select(profile_name, cluster_label = label, cluster_abbrev = abbrev), 
+        nba_adjusted_full |> select(profile_name, cluster_label = label, cluster_abbrev = abbrev),
         by = join_by(player_name == profile_name)
     )
 ```
@@ -1029,8 +1035,8 @@ For the situation in #2, all players will have a value at least zero or greater.
 
 ```{r}
 mbb_imputed <- kNN(
-    mbb_fillna_1, 
-    variable = setdiff(names(which(mbb_na > 0)), "col_3pp"), 
+    mbb_fillna_1,
+    variable = setdiff(names(which(mbb_na > 0)), "col_3pp"),
     k = 5
 ) |>
     select(!contains("_imp"))
@@ -1050,7 +1056,7 @@ any(mbb_na_2 > 0)
 And now, our training data is fully cleaned up! Let's bring in our testing data, or the "incoming prospects".
 
 ```{r}
-mbb_prospects <- read.csv('../bballrefstats/incoming-prospects.csv')
+mbb_prospects <- read.csv("../bballrefstats/incoming-prospects.csv")
 ```
 
 ```{r}
@@ -1079,17 +1085,17 @@ We can evaluate feature importance with both but in different ways. They also ar
 
 ```{r}
 mod_nn <- mlp(
-    hidden_units = tune(), 
-    penalty = tune(), 
+    hidden_units = tune(),
+    penalty = tune(),
     epochs = tune()
 ) |>
     set_engine("nnet") |>
     set_mode("classification")
 
 mod_xg <- boost_tree(
-    mtry = tune(), 
-    trees = tune(), 
-    tree_depth = tune(), 
+    mtry = tune(),
+    trees = tune(),
+    tree_depth = tune(),
     learn_rate = tune()
 ) |>
     set_engine("xgboost") |>
@@ -1123,17 +1129,17 @@ mod_recipe <- recipe(cluster_label ~ ., mbb_imputed) |>
 
 ```{r}
 mod_nn_grid <- grid_regular(
-    hidden_units(), 
-    penalty(), 
-    epochs(), 
+    hidden_units(),
+    penalty(),
+    epochs(),
     levels = 4
 )
 
 mod_xg_grid <- grid_regular(
-    trees(), 
-    tree_depth(), 
-    learn_rate(), 
-    mtry(c(1, ceiling(sqrt(30)))), 
+    trees(),
+    tree_depth(),
+    learn_rate(),
+    mtry(c(1, ceiling(sqrt(30)))),
     levels = 4
 )
 ```
@@ -1199,13 +1205,17 @@ mod_tune_nn <-
 With both of those tuned, let's compare the top 5 configurations for each model:
 
 ```{r}
-mod_tune_xg |> collect_metrics() |> slice_max(mean, n = 5)
+mod_tune_xg |>
+    collect_metrics() |>
+    slice_max(mean, n = 5)
 ```
 
 The XGBoost model is producing "AUC" values of right around 0.81. We tuned 4 hyperparameters, and we see some common themes: `mtry` of 1 or 2, `tree_depth` of 5, and `learn_rate` of 0.1e^-6. That's a pretty performant model. Let's plot all values:
 
 ```{r}
-mod_tune_nn |> collect_metrics() |> slice_max(mean, n = 5)
+mod_tune_nn |>
+    collect_metrics() |>
+    slice_max(mean, n = 5)
 ```
 
 The Neural Network model is producing "AUC" values of around 0.85. We tuned 3 hyperparameters. The only real common theme is a `penalty` of 1. We're also seeing about half the `std_err` as we had with XGBoost. Additionally, the time to fit the model was quite a big lower with Neural Network.
@@ -1228,7 +1238,7 @@ Let's now:
 
 ```{r}
 mbb_predictions <- predict(
-    final_fit_nn, 
+    final_fit_nn,
     mbb_prospects |> select(-draft_projection) |> mutate(cluster_abbrev = "X")
 )
 ```
@@ -1236,7 +1246,7 @@ mbb_predictions <- predict(
 And here we have our predictions w/ prospects:
 
 ```{r}
-classified_prospects <- 
+classified_prospects <-
     mbb_prospects |>
     mutate(cluster_label = mbb_predictions$.pred_class) |>
     select(draft_projection, player_name, cluster_label)
