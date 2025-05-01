@@ -1,0 +1,594 @@
+---
+title: "Delivery Standardization"
+subtitle: "Framework Exploration | IS 6813"
+author: "Adam Bushman (u6049169)"
+date: "3/30/2025"
+format: 
+    html:
+        css: styles.css
+        theme: simplex
+        toc: true
+        embed-resources: true
+editor:
+    render-on-save: true
+---
+
+```{r}
+#| warning: false
+
+library('tidyverse')
+library('tidymodels')
+library('ggtext')
+library('themis')
+library('caret')
+
+swire_cust_enriched <- readRDS("data/swire_cust_enriched.Rds")
+cluster_assignments_all <- readRDS("data/cluster_assignments.Rds")
+```
+
+```{r include = FALSE}
+
+# Branding colors
+swire_colors <- list(
+  "red" = "#cd0720", 
+  "blue" = "#005398", 
+  "gray" = "#f2f2f2"
+)
+
+# {ggplot2} theme for Swire
+theme_swire <- function() {
+    theme(
+        plot.title.position = "plot",
+
+        plot.background = element_rect(fill = "white", color = NA), 
+        panel.background = element_rect(fill = swire_colors$gray, color = NA), 
+
+        plot.title = element_text(color = swire_colors$red, face = "bold", family = "Poppins"), 
+        plot.subtitle = element_text(face = "italic", family = "Poppins"), 
+        axis.title = element_text(face = "bold", family = "Poppins"), 
+        axis.text = element_text(family = "Poppins"), 
+
+        strip.background = element_rect(fill = swire_colors$blue, color = NA), 
+        strip.text = element_text(color = "white", face = "bold")
+    )
+}
+```
+
+
+Now let's join those cluster assignments back to our original, enriched data set. This will allow us to explore the properties of each cluster.
+
+```{r}
+swire_cust_clustered <- 
+    swire_cust_enriched |> 
+    mutate(
+        hclust = cluster_assignments_all[['hclust']], 
+        kmeans = cluster_assignments_all[['kmeans']], 
+    )
+```
+
+We have 3 clusters. Let's see how each method did to describe
+
+Let's proceed exploring `kmeans`; there's a lot more balance in those results than hclust.
+
+
+## Cluster Exploration
+
+Let's start with `kmeans`. We're going to look at the most important features that determine these clusters. Additionally, we'll explore a handful of these in the data.
+
+Here’s the function that will ingest our dataset, classifify against a binary target (1 = cluster of interest, 0 = all other clusters).
+
+We’ll perform cross validation, take the best model, fit on the entire data set, and take the top coefficients.
+
+```{r}
+get_elasnet_top_features <- function(data) {
+    # Configure recipe
+    mod_rec <- recipe(target ~ ., data) |>
+        step_dummy(all_nominal_predictors()) |>
+        step_zv(all_predictors()) |>
+        step_normalize(all_numeric_predictors()) |>
+        step_downsample(target)
+
+    # Setup cross-validation folds
+    mod_cv <- rsample::vfold_cv(
+        data, v = 5, strata = target
+    )
+
+    # Configure tuning grid
+    mod_tune_grid <- grid_random(
+        penalty(),
+        mixture(),
+        size = 20
+    )
+
+    # Setup model definition
+    mod_def <- logistic_reg(
+        mixture = tune(),
+        penalty = tune()
+    ) |>
+        set_engine("glmnet")
+
+    # Configure workflow
+    mod_wflw <-
+        workflow() |>
+        add_model(mod_def) |>
+        add_recipe(mod_rec)
+
+    # Run cross-validated tuning
+    set.seed(814)
+    mod_tune <-
+        mod_wflw |>
+        tune_grid(
+            resamples = mod_cv,
+            grid = mod_tune_grid,
+            metrics = metric_set(roc_auc)
+        )
+
+    # print(collect_metrics(mod_tune))
+
+    # Select & fit best model
+    best_mod <- mod_tune |> select_best(metric = "roc_auc")
+    final_wflw <- mod_wflw |> finalize_workflow(best_mod)
+    final_fit <- fit(final_wflw, data = data)
+
+    # Capture the top predictors by absolute value of coefficient
+    tidy(final_fit) |>
+        arrange(desc(abs(estimate))) |>
+        filter(
+            term != '(Intercept)' & estimate != 0.0
+        ) |>
+        select(-penalty)
+}
+```
+
+This will be a function used later:
+
+```{r}
+get_cm_stats <- function(x, y) {
+    tbl <- table(as.integer(x), as.integer(y))
+    print(tbl)
+    print(caret::confusionMatrix(tbl))
+}
+```
+
+
+## Cluster 1
+
+### Investigation
+
+Let's start with "Cluster 1"...
+
+```{r}
+swire_cust_clustered |> filter(kmeans == "Cluster_1") |> nrow()
+```
+
+```{r}
+summary(swire_cust_clustered[swire_cust_clustered$kmeans == "Cluster_1",]$ordered_total_2023)
+```
+
+This cluster is made of 23K customers (nearly 77% of the total). We see a handy bit of variance, but most customers still fall in the "marginally low sales" category. Even the 75%tile customer is less than 200 gallons + cases ordered in 2023. 
+
+Let's take a look at the features largely determining this group:
+
+```{r}
+#| class: scrolling-y
+
+target_cluster_df <- swire_cust_clustered |>
+    mutate(target = factor(ifelse(kmeans == "Cluster_1", 1, 0))) |>
+    select(-c(customer_number, primary_group_number, kmeans, hclust))
+
+C1_top10 <- get_elasnet_top_features(target_cluster_df)
+
+C1_top10 %>% print(n = nrow(.))
+```
+
+As expected, measures of volume is the predominant theme in defining this group. 
+
+
+### Definition
+
+This is clearly the "WHITE TRUCK" group. This group have features of:
+
+1.  Local market partner
+2.  They don't order through sales reps
+3.  They usually come from "GOODS" channels, and not "BULK TRADE"
+
+
+### Quick rules for Segmentation
+
+Now the question is, how do we derive a fairly simple "rule of thumb" to classify these customers?
+
+What if we explore these features a bit:
+
+```{r}
+C1_expl <- 
+    swire_cust_clustered |> 
+    mutate(
+        cluster_1 = kmeans == "Cluster_1", 
+        order_type_flag = frequent_order_type != 'SALES REP', 
+        cold_drink_flag = case_when(
+            cold_drink_channel == 'GOODS' | cold_drink_channel != 'BULK TRADE' ~ 1, 
+            TRUE ~ 0
+        ), 
+        lmp_flag = local_market_partner, 
+
+    )
+```
+
+Now let's compare who was flagged by these properties and are mapped to "Cluster 1":
+
+```{r}
+get_cm_stats(C1_expl$cluster_1, C1_expl$cold_drink_flag)
+```
+
+This does a very good job! Accuracy is high but we're getting to many fals positives.
+
+```{r}
+get_cm_stats(C1_expl$cluster_1, C1_expl$order_type_flag)
+```
+
+This one isn't so good. There's a fair amount of misclassifications. This gives the impression the feature is only helpful in conjuction with something else.
+
+```{r}
+get_cm_stats(C1_expl$cluster_1, C1_expl$lmp_flag)
+```
+
+This one is fairly good, but still too many false positives. 
+
+Let's see if greater than 2 of those conditions met is helpful!
+
+```{r}
+C1_expl <- C1_expl |> 
+    mutate(cond_2plus = (lmp_flag + order_type_flag + cold_drink_flag) > 1)
+```
+
+```{r}
+get_cm_stats(C1_expl$cluster_1, C1_expl$cond_2plus)
+```
+
+This does fairly well. But there's something we're not capturing!
+
+```{r}
+C1_expl |> filter(
+    (cluster_1 == 0 & cond_2plus == TRUE) |
+    (cluster_1 == 1 & cond_2plus == FALSE) 
+) |> group_by(cold_drink_channel) |> count()
+```
+
+
+## Cluster 3
+
+### Investigation
+
+Let's move on to "Cluster 3"...
+
+```{r}
+swire_cust_clustered |> filter(kmeans == "Cluster_3") |> nrow()
+```
+
+```{r}
+summary(swire_cust_clustered[swire_cust_clustered$kmeans == "Cluster_3",]$ordered_total_2023)
+```
+
+This cluster is made up of just 37 customers (nearly <1% of the total). This group is characterized by a very low floor and much tighter variance than we've seen from the previous two clusters. 
+
+Let's take a look at the features largely determining this group:
+
+```{r}
+#| class: scrolling-y
+
+target_cluster_df <- swire_cust_clustered |>
+    mutate(target = factor(ifelse(kmeans == "Cluster_3", 1, 0))) |>
+    select(-c(customer_number, primary_group_number, kmeans, hclust))
+
+C3_top10 <- get_elasnet_top_features(target_cluster_df)
+
+C3_top10 %>% print(n = nrow(.))
+```
+
+
+
+### Definition
+
+Clearly this group we'd define as the obvious "RED TRUCK" group. However, this is far too few to say exclusivley should be supported in this business model. Who else, for example boasts the potential for "RED TRUCK".
+
+
+### Quick rules for Segmentation
+
+So what are the simple "rules of thumb" to classify these customers?
+
+
+
+## Cluster 2
+
+### Investigation
+
+We now circle back to "Cluster 2".
+
+```{r}
+swire_cust_clustered |> filter(kmeans == "Cluster_2") |> nrow()
+```
+
+```{r}
+summary(swire_cust_clustered[swire_cust_clustered$kmeans == "Cluster_2",]$ordered_total_2023)
+```
+
+This cluster is made up of just over 7K customers (just of 23% of the total). Interestingly, this group doesn't boast the same ceiling of Cluster 1 but has a higher center point than the others. 
+
+Let's take a look at the features largely determining this group:
+
+```{r}
+#| class: scrolling-y
+
+target_cluster_df <- swire_cust_clustered |>
+    mutate(target = factor(ifelse(kmeans == "Cluster_2", 1, 0))) |>
+    select(-c(customer_number, primary_group_number, kmeans, hclust))
+
+C2_top10 <- get_elasnet_top_features(target_cluster_df)
+
+C2_top10 %>% print(n = nrow(.))
+```
+
+
+
+### Definition
+
+Clearly this group we'd define as the obvious "RED TRUCK" group. However, this is far too few to say exclusivley should be supported in this business model. Who else, for example boasts the potential for "RED TRUCK".
+
+
+### Quick rules for Segmentation
+
+So what are the simple "rules of thumb" to classify these customers?
+
+
+```{r}
+camcorder::gg_record(
+    dir = "~/Pictures/Camcorder", 
+    device = "jpeg", 
+    width = 16, 
+    height = 9, 
+    units = "cm", 
+    dpi = 300
+)
+```
+
+```{r}
+swire_cust_clustered |>
+    filter(ordered_total_2023 >= 400 | ordered_total_2024 >= 400) |>
+    mutate(
+        avg_transaction_amt = (ordered_total_2023 + ordered_total_2024) / (order_transactions_2023 + order_transactions_2024), 
+        tx_amt_slice = factor(case_when(
+            avg_transaction_amt < 25 ~ "<25", 
+            avg_transaction_amt < 50 ~ "<50", 
+            avg_transaction_amt < 100 ~ "<100", 
+            avg_transaction_amt < 250 ~ "<250", 
+            TRUE ~ "250+"
+        ), levels = c("<25", "<50", "<100", "<250", "250+"))
+    ) |>
+    group_by(tx_amt_slice) |>
+    count() |>
+    ungroup() |>
+    mutate(
+        perc = n / sum(n), 
+        my_col = case_when(
+            tx_amt_slice == "<25" ~ swire_colors$red,
+            tx_amt_slice == "<50" ~ swire_colors$blue, 
+            TRUE ~ "darkgray"
+        )
+    ) |>
+
+    ggplot(
+        aes(n, forcats::fct_rev(tx_amt_slice), label = paste(
+            scales::label_comma()(n), 
+            paste0("(", scales::label_percent(accuracy = 1)(perc), ")")
+        ))
+    ) +
+        geom_col(
+            aes(fill = my_col)
+        ) +
+        geom_text(
+            aes(
+                hjust = ifelse(perc < 0.25, -0.25, 1.25), 
+                color = ifelse(perc < 0.25, "black", "white")
+            ), 
+            fontface = "bold"
+        ) +
+        scale_color_identity() +
+        scale_fill_identity() +
+        labs(
+            title = "Distribution of customers by average transaction amount bin", 
+            subtitle = "Among customers who met incumbent 400-gallon threshold in 2023 or 2024"
+        ) +
+        theme_minimal() +
+        theme_swire() +
+        theme(
+            axis.title = element_blank(), 
+            axis.text.x = element_blank(), 
+            axis.ticks.x = element_blank(), 
+            axis.text.y = element_text(size = 7)
+        )
+```
+
+
+
+## Segmentation Strategy
+
+```{r}
+swire_cust_clustered |>
+    # filter(ordered_total_2023 >= 400 | ordered_total_2024 >= 400) |>
+    mutate(
+        avg_transaction_amt = (ordered_total_2023 + ordered_total_2024) / (order_transactions_2023 + order_transactions_2024), 
+        avg_neighbor_transaction_amt = (neighbor_avg_ordered_total_2023 + neighbor_avg_ordered_total_2024) / (neighbor_avg_order_transactions_2023 + neighbor_avg_order_transactions_2024), 
+        
+        # CRITERIA
+        avg_tx_amt_flag = avg_transaction_amt >= 100, 
+        trade_channel_flag = trade_channel %in% c("FAST CASUAL DINING", "GENERAL RETAILER", "COMPREHENSIVE DINING"),
+        order_type_flag = frequent_order_type %in% c("MYCOKE LEGACY", "SALES REP", "EDI"), 
+        larger_neighbors_flag = avg_neighbor_transaction_amt >= 100
+    ) |>
+    mutate(
+        group = case_when(
+            (avg_tx_amt_flag + larger_neighbors_flag + trade_channel_flag + avg_tx_amt_flag) > 1 ~ "RED TRUCK", 
+            TRUE ~ "WHITE TRUCK"
+        )
+    ) |>
+    group_by(group) |>
+    summarise(
+        n = n(), 
+        total_volume = sum((ordered_total_2023 + ordered_total_2024) / 2),
+        tx_count = median((order_transactions_2023 + order_transactions_2024) / 2),
+        order_total = median((ordered_total_2023 + ordered_total_2024) / 2), 
+        neighbor_order_total = median((neighbor_avg_ordered_total_2023 + neighbor_avg_ordered_total_2024) / 2), 
+    )
+```
+
+
+
+## Annual Volume vs Avg Transaction Amount
+
+
+
+```{r}
+swire_expanded <-
+    swire_cust_clustered |>
+    mutate(
+        annual_volume = (ordered_total_2023 + ordered_total_2024) / 2, 
+        avg_transaction_amt = (ordered_total_2023 + ordered_total_2024) / (order_transactions_2023 + order_transactions_2024), 
+        avg_neighbor_transaction_amt = (neighbor_avg_ordered_total_2023 + neighbor_avg_ordered_total_2024) / (neighbor_avg_order_transactions_2023 + neighbor_avg_order_transactions_2024), 
+
+        # Groups
+        plus_400 = annual_volume >= 400, 
+        plus_100 = avg_transaction_amt >= 100
+    ) |>
+    mutate(
+        # CRITERIA
+        # "Growth conducive customer profiles"
+        big_box = trade_channel %in% c("SUPERSTORE", "BULK TRADE", "GENERAL RETAILER") & frequent_order_type %in% c("EDI", "SALES REP"),
+        niche_outlets = trade_channel %in% c("RECREATION", "TRAVEL") & frequent_order_type %in% c("SALES REP", "EDI", "MYCOKE LEGACY"), 
+        convenience_staples  = trade_channel %in% c("FAST CASUAL DINING", "GENERAL") & frequent_order_type %in% c("EDI", "MYCODE LEGACY", "SALES REP", "OTHER"), 
+        # "Growth condusive markets"
+        avg_tx_amt_flag = avg_transaction_amt >= 25, 
+        larger_neighbors_flag = avg_neighbor_transaction_amt >= 25
+    ) |>
+    mutate(
+        group = case_when(
+            (big_box + niche_outlets + convenience_staples) > 0 | (avg_tx_amt_flag + larger_neighbors_flag) > 0 ~ "RED TRUCK", 
+            TRUE ~ "WHITE TRUCK"
+        )
+    )
+```
+
+
+```{r}
+swire_expanded |>
+    select(plus_400, plus_100, annual_volume, avg_transaction_amt) |>
+    drop_na() |>
+    group_by(plus_400, .drop = "groups") |>
+    mutate(
+        sd = sd(avg_transaction_amt), 
+        median = median(avg_transaction_amt), 
+        adj = median / sd
+    ) |>
+    ggplot(
+        aes(y = plus_400)
+    ) +
+    geom_boxplot(
+        aes(
+            x = avg_transaction_amt, 
+            color = ifelse(plus_400, swire_colors$red, swire_colors$blue), 
+            fill = ifelse(plus_400, swire_colors$red, swire_colors$blue)
+        ), 
+        alpha = 0.25
+    ) +
+    geom_text(
+        aes(x = median, label = paste0("Adj SD: ",scales::label_comma(accuracy = 0.001)(adj))), 
+        hjust = 0.5,
+        vjust = -4.5
+    ) +
+    scale_x_log10() +
+    scale_fill_identity() +
+    scale_color_identity() +
+    labs(
+        title = "Distribution of Customers by Avg Transaction Amount", 
+        subtitle = "Comparison between groups on ANNUAL VOLUME >= 400", 
+        x = "Avg Transaction Amount"
+    ) +
+    theme_swire() +
+    theme(
+        axis.title.y = element_blank()
+    )
+
+```
+
+
+```{r}
+swire_expanded |>
+    select(plus_400, plus_100, annual_volume, avg_transaction_amt) |>
+    drop_na() |>
+    group_by(plus_100, .drop = "groups") |>
+    mutate(
+        sd = sd(annual_volume), 
+        median = median(annual_volume), 
+        adj = median / sd
+    ) |>
+    ggplot(
+        aes(y = plus_100)
+    ) +
+    geom_boxplot(
+        aes(
+            x = annual_volume, 
+            color = ifelse(plus_100, swire_colors$red, swire_colors$blue), 
+            fill = ifelse(plus_100, swire_colors$red, swire_colors$blue)
+        ), 
+        alpha = 0.25
+    ) +
+    geom_text(
+        aes(x = median, label = paste0("Adj SD: ",scales::label_comma(accuracy = 0.001)(adj))), 
+        hjust = 0.5,
+        vjust = -4.5
+    ) +
+    scale_x_log10() +
+    scale_fill_identity() +
+    scale_color_identity() +
+    labs(
+        title = "Distribution of Customers by Annual Volume", 
+        subtitle = "Comparison between groups on AVG TRANSACTION AMOUNT >= 100", 
+        x = "Annual Volume"
+    ) +
+    theme_swire() +
+    theme(
+        axis.title.y = element_blank()
+    )
+```
+
+
+
+
+
+
+```{r}
+swire_segmentation |>
+    ggplot(
+        aes(x = customer_tenure_yrs, y = annual_total)
+    ) +
+    geom_jitter(
+        aes(color = ifelse(segment == 'RED TRUCK', swire_colors$red, swire_colors$blue)), 
+        alpha = 0.15, 
+        show.legend = TRUE
+    ) +
+    scale_y_log10(
+        labels = scales::label_number_auto()
+    ) +
+    scale_x_continuous(breaks = scales::pretty_breaks()) +
+    scale_color_identity() +
+    labs(
+        title = "Segmentation variability by tenure", 
+        subtitle = "Comparison between <span style='color:#cd0720'>**RED TRUCK**</span> and <span style='color:#005398'>**WHITE TRUCK**</span> by annual volume", 
+        x = "Customer Tenure (yrs)", 
+        y = "Annual Volume", 
+        color = "+400-gal?"
+    ) +
+    theme_swire() +
+    theme(
+        plot.subtitle = element_markdown(face = "italic", family = "Poppins"), 
+    )
+```

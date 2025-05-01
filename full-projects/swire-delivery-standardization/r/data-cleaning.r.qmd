@@ -1,0 +1,216 @@
+---
+title: "Delivery Standardization"
+subtitle: "Data Cleaning | IS 6813"
+author: "Adam Bushman (u6049169)"
+date: "3/3/2025"
+format: 
+    html:
+        css: styles.css
+        theme: simplex
+        toc: true
+        embed-resources: true
+editor:
+    render-on-save: true
+---
+
+```{r}
+library('tidyverse')
+
+transactions <- as.data.frame(data.table::fread("data/transactional_data.csv"))
+customer_address <- read.csv("data/customer_address_and_zip_mapping.csv")
+customer_profile <- read.csv("data/customer_profile.csv")
+delivery_cost <- readxl::read_xlsx('data/delivery_cost_data.xlsx')
+```
+
+```{r}
+delivery_cost_expanded <- 
+    delivery_cost |>
+    # Split the volume range into an object
+    mutate(
+        range_obj = purrr::map(`Vol Range`, str_split, " - ")
+    ) |>
+    # Unnest the object for individual reference
+    unnest(range_obj) |>
+    unnest_wider(range_obj, names_sep = "_") |>
+    # Handle the "1350+" scenario
+    mutate(
+        min_vol = purrr::map_chr(range_obj_1, str_replace, "\\+", ""), 
+        max_vol  = ifelse(is.na(range_obj_2), (2^31) - 1, range_obj_2)
+    ) |>
+    # Turn volumes from charaters to integers
+    mutate(
+        across(min_vol:max_vol, as.integer)
+    ) |>
+    # Drop irrelevant columns
+    select(-c(range_obj_1, range_obj_2, `Vol Range`))
+```
+
+```{r}
+annual_cust_volume <-
+    # Take transaction level data
+    transactions |>
+    # Bring in the customer profile for the `Cold Drink Channel`
+    inner_join(
+        customer_profile, 
+        join_by(CUSTOMER_NUMBER)
+    ) |>
+    # Get annual cases/gallons by customer
+    group_by(YEAR, CUSTOMER_NUMBER, COLD_DRINK_CHANNEL) |>
+    summarise(
+        annual_cases = sum(DELIVERED_CASES), 
+        annual_gallons = sum(DELIVERED_GALLONS), 
+        .groups = "drop"
+    )
+```
+
+```{r}
+delivery_cost_tiers <-
+    annual_cust_volume |>
+    left_join(
+        delivery_cost_expanded |> filter(`Applicable To` != 'Fountain'), 
+        join_by(COLD_DRINK_CHANNEL == `Cold Drink Channel`, annual_cases >= min_vol, annual_cases <= max_vol)
+    ) |>
+    left_join(
+        delivery_cost_expanded |> filter(`Applicable To` == 'Fountain'), 
+        join_by(COLD_DRINK_CHANNEL == `Cold Drink Channel`, annual_gallons >= min_vol, annual_gallons <= max_vol), 
+        suffix = c(".c", ".g")
+    ) |>
+    select(
+        YEAR, CUSTOMER_NUMBER, 
+        case_delivery_cost = `Median Delivery Cost.c`, 
+        gallon_delivery_cost = `Median Delivery Cost.g`
+    )
+```
+
+```{r}
+cust_addr_expanded <-
+    customer_address |>
+    # Split the full address into an object
+    mutate(
+        addr_obj = purrr::map(full.address, str_split, ",")
+    ) |>
+    # Unnest the object for individual reference
+    unnest(addr_obj) |>
+    unnest_wider(addr_obj, names_sep = "_") |>
+    # Pad the zip code with leading zeros and make a character
+    mutate(
+        zip = str_pad(zip, 5, "left", pad = "0")
+    ) |>
+    # Rename columns
+    rename(
+        city = addr_obj_2, 
+        state = addr_obj_3, 
+        state_abbr = addr_obj_4, 
+        county = addr_obj_5, 
+        lat = addr_obj_7, 
+        lon = addr_obj_8
+    ) |>
+    # Turn lat/lon values to numeric
+    mutate(
+        across(lat:lon, as.numeric)
+    ) |>
+    # Drop irrelevant columns
+    select(-c(full.address, addr_obj_1, addr_obj_6))
+```
+
+
+```{r}
+combined_data_raw <-
+    # Take transactions
+    transactions |>
+    # Join the customer profile data thereto
+    inner_join(
+        customer_profile |> mutate(zip = str_pad(
+            ZIP_CODE, 5, "left", "0"
+        )), 
+        join_by(CUSTOMER_NUMBER)
+    ) |>
+    # Join the customer address data thereto
+    inner_join(
+        cust_addr_expanded, 
+        join_by(zip)
+    ) |>
+    # Join the delivery cost tiers data thereto
+    inner_join(
+        delivery_cost_tiers, 
+        join_by(YEAR, CUSTOMER_NUMBER)
+    )
+```
+
+```{r}
+combined_data_std <- 
+    # Take the combined data from above
+    combined_data_raw |>
+    # Standardize the names
+    janitor::clean_names() |>
+    # Standardize data types
+    mutate(
+        # Convert charater dates to date types
+        across(c(transaction_date, first_delivery_date, on_boarding_date), lubridate::mdy), 
+        # Turn IDs into characters
+        across(c(customer_number, primary_group_number), as.character), 
+        # Turn finite categorical fields into factors
+        across(
+            c(order_type, cold_drink_channel, frequent_order_type, trade_channel, sub_trade_channel, state, state_abbr), 
+            as.factor
+        )
+    ) |>
+    # Remove irrelevant columns
+    select(-c(zip_code))
+```
+
+
+```{r}
+swire_data_full <-
+    combined_data_std |>
+    # Add new fields
+    mutate(
+        # Calculate delivered gallons cost
+        # Assume a return is only half as costly as a normal delivery
+        delivered_gallons_cost = case_when(
+            delivered_gallons < 0 ~ -1 * delivered_gallons * gallon_delivery_cost / 2, 
+            TRUE ~ delivered_gallons * gallon_delivery_cost
+        ), 
+        # Calculate delivered case cost
+        # Assume a return is only half as costly as a normal delivery
+        delivered_cases_cost = case_when(
+            delivered_cases < 0 ~ -1 * delivered_cases * case_delivery_cost / 2, 
+            TRUE ~ delivered_cases * case_delivery_cost
+        ),
+        # Create 'total' columns representing the sum of gallons & cases
+        ordered_total = ordered_gallons + ordered_cases, 
+        loaded_total = loaded_gallons + loaded_cases, 
+        delivered_total = delivered_gallons + delivered_cases, 
+    ) |>
+    group_by(year, primary_group_number) |>
+    mutate(
+        # Calculate number of customers belonging to each primary group by year
+        primary_group_customers = ifelse(is.na(primary_group_number), 0, n_distinct(customer_number))
+    ) |>
+    group_by(year, customer_number) |>
+    mutate(
+        # Calculate how often a customer issues a return each year
+        return_frequency = sum(ifelse(delivered_cases < 0 | delivered_gallons < 0, 1, 0))
+    ) |>
+    ungroup() |>
+    # Drop select columns that are no longer relevant
+    select(-c(gallon_delivery_cost, case_delivery_cost)) |>
+    # Order the columns logically
+    select(
+        # CUSTOMER PROFILE ITEMS
+        customer_number, primary_group_number, primary_group_customers, 
+        on_boarding_date, first_delivery_date, cold_drink_channel, frequent_order_type, trade_channel, sub_trade_channel, local_market_partner, co2_customer, city, zip, state, state_abbr, county, lat, lon, 
+        
+        # TRANSACTION DETAILS
+        transaction_date, week, year, order_type, 
+        ordered_cases, loaded_cases, delivered_cases, delivered_cases_cost, 
+        ordered_gallons, loaded_gallons, delivered_gallons, delivered_gallons_cost, 
+        ordered_total, loaded_total, delivered_total, 
+        return_frequency
+    )
+```
+
+
+```{r}
+saveRDS(swire_data_full, file = "data/swire_data_full.Rds")
+```

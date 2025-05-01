@@ -1,0 +1,488 @@
+---
+title: "Delivery Standardization"
+subtitle: "Exploratory Data Analysis | IS 6813"
+author: "Adam Bushman (u6049169)"
+date: "2/22/2025"
+format: 
+    html:
+        css: styles.css
+        theme: simplex
+        toc: true
+        embed-resources: true
+editor:
+    render-on-save: true
+---
+
+
+# Introduction
+
+Lorem ipsum
+
+# File Exploration
+
+## Environment Prep
+
+### Libraries & Data
+
+Let's load them up
+
+```{python}
+import polars as pl
+import duckdb
+import skimpy
+import folium
+
+from plotnine import (
+    ggplot, aes, 
+    geom_point, geom_boxplot, 
+    scale_y_log10, scale_x_log10, 
+    theme, coord_flip
+)
+```
+
+
+Why **DuckDB**? Because it's fast, very lightweight, and facilitates easy to interpret SQL.
+
+```{python}
+# Setup DuckDB connection
+con = duckdb.connect()
+
+# Reference CSVs
+cust_addr_zip_map = 'data/customer_address_and_zip_mapping.csv'
+customer_profile = 'data/customer_profile.csv'
+transaction_data = 'data/transactional_data.csv'
+delivery_cost = 'data/delivery_cost_data.xlsx'
+```
+
+
+### Resources
+
+Just need to install some extensions to DuckDB for working with Excel documents.
+
+```{python}
+# For reading Excel documents
+con.execute("""
+INSTALL spatial;
+LOAD spatial;
+""");
+```
+
+
+### Setup w/ DuckDB
+
+We'll create an in memory, persistent database with all of our tables. 
+
+```{python}
+# Load CSVs to persistent tables
+con.execute(f"""
+    CREATE TABLE cust_addr AS (
+        SELECT * FROM read_csv_auto('{cust_addr_zip_map}')
+    );
+
+    CREATE TABLE cust_profile AS (
+        SELECT * FROM read_csv_auto('{customer_profile}')
+    );
+
+    CREATE TABLE transactions AS (
+        SELECT * FROM read_csv_auto('{transaction_data}')
+    );
+
+    CREATE TABLE delivery_cost AS (
+        SELECT * FROM st_read('{delivery_cost}')
+    );
+""")
+```
+
+
+```{python}
+con.sql("SHOW TABLES")
+```
+
+Now we're all squared away.
+
+
+## Swire Data Sets
+
+### `customer_profile.csv`
+
+We can now use SQL to query the `cust_profile` table. In the case where we need some programming, we can just create a polars dataframe:
+
+```{python}
+cust_profile_df = con.sql("FROM cust_profile").pl()
+```
+
+Let's first look at the columns:
+
+```{python}
+con.sql("DESCRIBE cust_profile")
+```
+
+11 columns. All the data types seem reasonable. Let's assess sparcity of the data:
+
+```{python}
+cust_profile_df.null_count()
+```
+
+We have mostly categorical features in here. Let's determine some of the distributions of these, such as...
+
+How many groups/individual customers are there? (remember, many individual customers could roll up to a group)
+
+```{python}
+con.sql("""
+    SELECT
+    COUNT(DISTINCT COALESCE(PRIMARY_GROUP_NUMBER, CUSTOMER_NUMBER)) AS TOT_CUST
+    FROM cust_profile
+""")
+```
+
+There's a few dozen groups with many customers. Most are single customers, however. 
+
+```{python}
+con.sql("""
+    SELECT
+    COALESCE(PRIMARY_GROUP_NUMBER, CUSTOMER_NUMBER) AS CUST_ID
+    ,COUNT(*)
+    FROM cust_profile
+    GROUP BY ALL
+    ORDER BY COUNT(*) DESC
+""")
+```
+
+What kind of order frequency is seen across these?
+
+```{python}
+con.sql("""
+    SELECT FREQUENT_ORDER_TYPE, COUNT(*) AS VOL
+    FROM cust_profile
+    GROUP BY FREQUENT_ORDER_TYPE
+    ORDER BY COUNT(*) DESC
+""")
+```
+
+```{python}
+con.sql("""
+    SELECT COLD_DRINK_CHANNEL, COUNT(*) AS VOL
+    FROM cust_profile
+    GROUP BY COLD_DRINK_CHANNEL
+    ORDER BY COUNT(*) DESC
+""")
+```
+
+We see mostly local market partners.
+
+```{python}
+con.sql("""
+    SELECT LOCAL_MARKET_PARTNER, COUNT(*) AS VOL
+    FROM cust_profile
+    GROUP BY LOCAL_MARKET_PARTNER
+    ORDER BY COUNT(*) DESC
+""")
+```
+
+However, if we intersect by group, there may be more to the story:
+
+```{python}
+con.sql("""
+    SELECT
+    LOCAL_MARKET_PARTNER,
+    SUM(CASE WHEN PRIMARY_GROUP_NUMBER IS NULL THEN 1 ELSE 0 END) AS CUST,
+    SUM(CASE WHEN PRIMARY_GROUP_NUMBER IS NULL THEN 0 ELSE 1 END) AS GROUP
+    FROM cust_profile
+    GROUP BY LOCAL_MARKET_PARTNER
+""")
+```
+
+Solo customers are far more likely to be local market partners (which makes sense).
+
+What is the distribution of buying CO2?
+
+```{python}
+con.sql("""
+    SELECT CO2_CUSTOMER,
+
+    SUM(CASE WHEN PRIMARY_GROUP_NUMBER IS NULL THEN 1 ELSE 0 END) AS CUST,
+    SUM(CASE WHEN PRIMARY_GROUP_NUMBER IS NULL THEN 0 ELSE 1 END) AS GROUP
+    FROM cust_profile
+    GROUP BY CO2_CUSTOMER
+""")
+```
+
+It's about 50-50, but we see that "franchises" are far less likely to source their CO2 from Swire. So how valuable is that business?
+
+
+
+### `customer_address_and_zip_mapping.csv`
+
+Let's create our polars data frame:
+
+```{python}
+cust_addr_df = con.sql("FROM cust_addr").pl()
+```
+
+And now look at the columns:
+
+```{python}
+con.sql("DESCRIBE cust_addr")
+```
+
+We need to pull out those full addresses. We can do that by splitting the string, grabbing list elements of interest, and then properly casting.
+
+```{python}
+con.execute("""
+    CREATE TABLE cust_addr_detail AS (
+        SELECT
+        zip
+        ,LIST_ELEMENT(STRING_SPLIT("full address", ','), 2) AS city
+        ,LIST_ELEMENT(STRING_SPLIT("full address", ','), 3) AS state
+        ,LIST_ELEMENT(STRING_SPLIT("full address", ','), 4) AS state_abbr
+        ,LIST_ELEMENT(STRING_SPLIT("full address", ','), 5) AS county
+        ,CAST(LIST_ELEMENT(STRING_SPLIT("full address", ','), 7) AS DOUBLE) AS lat
+        ,CAST(LIST_ELEMENT(STRING_SPLIT("full address", ','), 8) AS DOUBLE) AS lon
+        FROM cust_addr
+    )
+""")
+```
+
+```{python}
+con.sql("DESCRIBE cust_addr_detail")
+```
+
+Looks great! Let's join and see where most customers are by state.
+
+```{python}
+con.sql("""
+    SELECT 
+    cad.state
+    ,COUNT(*)
+    FROM cust_profile cp
+    INNER JOIN cust_addr_detail cad ON cad.zip = cp.ZIP_CODE
+    GROUP BY cad.state
+""")
+```
+
+It appears that most customers are found in Massachusetts. Let's see if we can't render a map:
+
+```{python}
+cust_addr = con.sql("SELECT * FROM cust_addr_detail").pl()
+```
+
+```{python}
+swire_map = folium.Map(
+    location = [
+        cust_addr['lat'].mean(),
+        cust_addr['lon'].mean()
+    ],
+    zoom_start = 4.5, 
+    control_scale = True
+)
+```
+
+```{python}
+#| include: false
+
+for row in cust_addr.iter_rows():
+    folium.Marker(
+        location = [row[5], row[6]], 
+        icon = folium.Icon(color = "red")
+    ).add_to(swire_map)
+```
+
+```{python}
+swire_map
+```
+
+There is somewhat more concentraction around city centers, but not near what I would expect. Seems curious.
+
+
+
+### `transactional_data.csv`
+
+Let's create our polars data frame:
+
+```{python}
+transac_df = con.sql("FROM transactions").pl()
+```
+
+And now look at the columns:
+
+```{python}
+con.sql("DESCRIBE transactions")
+```
+
+Let's look at the summary statistics here:
+
+```{python}
+transac_df.describe()
+```
+
+No missing data, which is very good. Most customers aren't ordering anything or very little on a per transaction date basis. Let's evaluate on an annual basis.
+
+```{python}
+con.sql("""
+    SELECT
+    YEAR
+    ,CUSTOMER_NUMBER
+    ,SUM(ORDERED_CASES) + SUM(ORDERED_GALLONS) AS ORDERED_QTY
+    FROM transactions
+    GROUP BY
+    YEAR, CUSTOMER_NUMBER
+""").pl().describe()
+```
+
+We get our first glimpse at why there's the annual 400 gallon threshold. Over 2/3 aren't ordering that much. Woof.
+
+```{python}
+annual_data = con.sql("""
+    SELECT
+    t.CUSTOMER_NUMBER
+    ,cp.COLD_DRINK_CHANNEL
+    ,t.YEAR
+    ,date_diff('week', ON_BOARDING_DATE, FIRST_DELIVERY_DATE) AS WK_RAMP_UP
+    ,date_diff('year', FIRST_DELIVERY_DATE, current_date) AS YR_TENURE
+    ,SUM(t.ORDERED_CASES) + SUM(t.ORDERED_GALLONS) AS TOTAL_ORDERED
+    FROM transactions t
+    INNER JOIN cust_profile cp ON cp.CUSTOMER_NUMBER = t.CUSTOMER_NUMBER
+    GROUP BY ALL
+""").pl()
+```
+
+```{python}
+annual_data.shape
+```
+
+```{python}
+(
+    ggplot(annual_data)
+    + geom_point(
+        aes("WK_RAMP_UP", "TOTAL_ORDERED", color="COLD_DRINK_CHANNEL"),
+        alpha = 0.75
+    )
+    + scale_y_log10()
+    + scale_x_log10()
+)
+```
+
+```{python}
+(
+    ggplot(annual_data)
+    + geom_point(
+        aes("YR_TENURE", "TOTAL_ORDERED", color="COLD_DRINK_CHANNEL"), 
+        alpha = 0.75
+    )
+    + scale_y_log10()
+    + scale_x_log10()
+)
+```
+
+
+### `delivery_cost_data.xlsx`
+
+Let's create our polars data frame:
+
+```{python}
+deliv_df = con.sql("FROM delivery_cost").pl()
+```
+
+And now look at the columns:
+
+```{python}
+con.sql("DESCRIBE delivery_cost")
+```
+
+Let's intersect this data with a particular customer and their orders. 
+
+```{python}
+cost_data = con.sql("""
+    WITH 
+    delivery AS (
+        SELECT *
+        ,LIST_ELEMENT(STRING_SPLIT(d."Vol Range", ' - '), 1) AS MIN_COST
+        ,LIST_ELEMENT(STRING_SPLIT(d."Vol Range", ' - '), 2) AS MAX_COST
+        FROM delivery_cost d
+    ),
+    delivery_cleaned AS (
+        SELECT *
+        ,CAST((CASE 
+            WHEN MIN_COST LIKE '%+' THEN trim(MIN_COST, '+') 
+            ELSE MIN_COST END
+            ) AS INT) AS MIN_COST_VOL
+        ,COALESCE(CAST(MAX_COST AS INT), 2147483647) AS MAX_COST_VOL
+        FROM delivery
+    ), 
+    joined AS (
+        SELECT 
+        t.YEAR
+        ,t.CUSTOMER_NUMBER
+        ,c.COLD_DRINK_CHANNEL
+        ,c.FREQUENT_ORDER_TYPE
+        ,SUM(CASE WHEN ORDERED_CASES > 0 OR ORDERED_GALLONS > 0 THEN 1 ELSE 0 END) AS ORDER_CNT
+        ,SUM(ORDERED_CASES) AS ANNUAL_CASES
+        ,SUM(ORDERED_GALLONS) AS ANNUAL_GALLONS
+        FROM transactions t
+        INNER JOIN cust_profile c ON c.CUSTOMER_NUMBER = t.CUSTOMER_NUMBER
+        GROUP BY ALL
+    ),
+    formatted AS (
+        SELECT 
+        j.*
+        ,d2."Median Delivery Cost" AS COST_CASES
+        ,d1."Median Delivery Cost" AS COST_GALLONS
+        ,(d1."Median Delivery Cost" * j.ANNUAL_GALLONS) + (d2."Median Delivery Cost" * j.ANNUAL_CASES) AS DELIVERY_COST
+        ,((d1."Median Delivery Cost" * j.ANNUAL_GALLONS) + (d2."Median Delivery Cost" * j.ANNUAL_CASES)) / ORDER_CNT AS DELIVERY_COST_PER_ORDER
+        FROM joined j
+        LEFT JOIN delivery_cleaned d1 ON d1."Cold Drink Channel" = j.COLD_DRINK_CHANNEL
+            AND d1."Applicable To" = 'Fountain'
+            AND j.ANNUAL_GALLONS BETWEEN d1.MIN_COST_VOL AND d1.MAX_COST_VOL
+        LEFT JOIN delivery_cleaned d2 ON d2."Cold Drink Channel" = j.COLD_DRINK_CHANNEL
+            AND d2."Applicable To" = 'Bottles and Cans'
+            AND j.ANNUAL_CASES BETWEEN d2.MIN_COST_VOL AND d2.MAX_COST_VOL
+    )
+
+    FROM formatted
+""").pl()
+```
+
+```{python}
+(
+    ggplot(cost_data)
+    + geom_boxplot(
+        aes(x="COLD_DRINK_CHANNEL", y="DELIVERY_COST")
+    )
+    + scale_y_log10()
+    + coord_flip()
+)
+```
+
+```{python}
+(
+    ggplot(cost_data)
+    + geom_boxplot(
+        aes(x="FREQUENT_ORDER_TYPE", y="DELIVERY_COST")
+    )
+    + scale_y_log10()
+    + coord_flip()
+)
+```
+
+
+```{python}
+con.sql("""
+SELECT 
+SUM(CASE WHEN DELIVERED_GALLONS < 0 OR DELIVERED_CASES < 0 THEN 1 ELSE 0 END)
+,SUM(CASE WHEN DELIVERED_GALLONS < 0 OR DELIVERED_CASES < 0 THEN 1 ELSE 0 END) / COUNT(*)
+,COUNT(*)
+FROM transactions t
+""")
+```
+
+
+```{python}
+con.sql("""
+SELECT 
+
+,COUNT(DISTINCT COALESCE(PRIMARY_GROUP_NUMBER, t.CUSTOMER_NUMBER))
+FROM transactions t
+INNER JOIN cust_profile cp ON cp.CUSTOMER_NUMBER = t.CUSTOMER_NUMBER
+WHERE DELIVERED_GALLONS < 0 OR DELIVERED_CASES < 0
+""")
+```
