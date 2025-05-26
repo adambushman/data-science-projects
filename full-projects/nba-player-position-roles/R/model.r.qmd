@@ -1056,7 +1056,7 @@ any(mbb_na_2 > 0)
 And now, our training data is fully cleaned up! Let's bring in our testing data, or the "incoming prospects".
 
 ```{r}
-mbb_prospects <- read.csv("../bballrefstats/incoming-prospects.csv")
+mbb_prospects <- read.csv("bballrefstats/incoming-prospects.csv")
 ```
 
 ```{r}
@@ -1119,7 +1119,9 @@ Our recipe is fairly straight forward but we will put some extra preprocessing s
 ```{r}
 mod_recipe <- recipe(cluster_label ~ ., mbb_imputed) |>
     update_role(player_name, cluster_abbrev, new_role = "id") |>
+    step_novel(school_conf) |>
     step_dummy(school_conf) |>
+    step_zv() |>
     step_normalize(is.numeric) |>
     step_pca(is.numeric)
 ```
